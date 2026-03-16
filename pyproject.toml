@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "is469-research"
+version = "0.1.0"
+description = "research project for IS469 on various retrieval methods"
+authors = ["Joen Tan <joentze01@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+libsql-client = "^0.3.1"
+datasets = "^4.7.0"
+langchain = "^1.2.12"
+langgraph = "^1.1.2"
+openai = "^2.28.0"
+pandas = "^3.0.1"
+matplotlib = "^3.10.8"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
