@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "research project for IS469 on various retrieval methods"
 authors = ["Joen Tan <joentze01@gmail.com>"]
 readme = "README.md"
+package-mode = false
 
 [tool.poetry.dependencies]
 python = "^3.12"
@@ -16,6 +17,7 @@ pandas = "^3.0.1"
 matplotlib = "^3.10.8"
 chromadb = "^1.5.5"
 langchain-chroma = "^1.1.0"
+rank-bm25 = "^0.2.2"
 
 
 [build-system]
