@@ -38,10 +38,11 @@ logger = logging.getLogger(__name__)
 
 # Models
 LLM_MODEL = "gpt-4o-mini"
+CHUNKING_LLM_MAX_OUTPUT_TOKENS = 150
+ANSWERING_LLM_MAX_OUTPUT_TOKENS = 250
 
 # Paths and defaults
 DEFAULT_TEXTS_DIR = Path(__file__).resolve().parents[2] / "texts"
-TEXTS_DIR = Path(os.getenv("TEXTS_DIR", str(DEFAULT_TEXTS_DIR))).expanduser()
 DEFAULT_QUERY = "Explain how cloud revenue trends changed across companies."
 DEFAULT_TOP_K = 5
 
@@ -49,6 +50,9 @@ DEFAULT_TOP_K = 5
 MAX_SENTENCES_PER_CHUNK = 6
 MIN_SENTENCES_PER_CHUNK = 2
 OVERLAP_SENTENCES = 1
+CHUNK_PLANNING_WINDOW_SENTENCES = 80
+CHUNK_PLANNING_WINDOW_OVERLAP = 10
+CHUNK_PLANNING_MAX_SENTENCE_CHARS = 280
 
 
 @dataclass(frozen=True)
@@ -60,6 +64,36 @@ class Chunk:
     text: str
 
 
+def load_dotenv_file() -> None:
+    """Load key=value pairs from .env into process environment if not already set."""
+    dotenv_path = Path(__file__).resolve().parents[2] / ".env"
+    if not dotenv_path.exists() or not dotenv_path.is_file():
+        return
+
+    for raw_line in dotenv_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+def resolve_texts_dir(cli_texts_dir: Path | None = None) -> Path:
+    """Resolve texts directory from CLI, then env var, then default path."""
+    if cli_texts_dir is not None:
+        return cli_texts_dir.expanduser()
+
+    env_texts_dir = os.getenv("TEXTS_DIR")
+    if env_texts_dir:
+        return Path(env_texts_dir).expanduser()
+
+    return DEFAULT_TEXTS_DIR
+
+
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments for retrieval options."""
     parser = argparse.ArgumentParser(description="Agentic BM25 retrieval on markdown files")
@@ -68,7 +102,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--texts-dir",
         type=Path,
-        default=TEXTS_DIR,
+        default=None,
         help="Directory containing markdown files",
     )
     return parser.parse_args()
@@ -126,16 +160,22 @@ def _fallback_breakpoints(sentence_count: int) -> list[int]:
     return breaks
 
 
-def choose_chunk_breakpoints_with_agent(sentences: list[str], llm: ChatOpenAI) -> list[int]:
-    """
-    Ask an LLM to propose chunk boundaries.
+def _truncate_for_prompt(text: str, max_chars: int = CHUNK_PLANNING_MAX_SENTENCE_CHARS) -> str:
+    """Trim long sentence strings in prompts to control token usage."""
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 3].rstrip() + "..."
 
-    Returns sentence indexes where a boundary should be inserted after that index.
-    """
-    if len(sentences) <= MAX_SENTENCES_PER_CHUNK:
+
+def _choose_breakpoints_for_window(window_sentences: list[str], llm: ChatOpenAI) -> list[int]:
+    """Run one chunk-planning LLM call on a sentence window."""
+    if len(window_sentences) <= MAX_SENTENCES_PER_CHUNK:
         return []
 
-    numbered_sentences = "\n".join(f"{i}: {sentence}" for i, sentence in enumerate(sentences))
+    numbered_sentences = "\n".join(
+        f"{i}: {_truncate_for_prompt(sentence)}"
+        for i, sentence in enumerate(window_sentences)
+    )
     prompt = (
         "You are a chunking planner for a retrieval system.\n"
         "Group adjacent sentences into coherent chunks by topic shifts.\n"
@@ -155,11 +195,42 @@ def choose_chunk_breakpoints_with_agent(sentences: list[str], llm: ChatOpenAI) -
         parsed = json.loads(text)
         raw_breaks = parsed.get("break_after", [])
         if not isinstance(raw_breaks, list):
-            return _fallback_breakpoints(len(sentences))
+            return []
         int_breaks = [int(x) for x in raw_breaks]
-        return _normalize_breakpoints(int_breaks, len(sentences))
+        return _normalize_breakpoints(int_breaks, len(window_sentences))
     except (json.JSONDecodeError, TypeError, ValueError):
-        return _fallback_breakpoints(len(sentences))
+        return []
+
+
+def choose_chunk_breakpoints_with_agent(sentences: list[str], llm: ChatOpenAI) -> list[int]:
+    """
+    Ask an LLM to propose chunk boundaries.
+
+    Returns sentence indexes where a boundary should be inserted after that index.
+    """
+    if len(sentences) <= MAX_SENTENCES_PER_CHUNK:
+        return []
+
+    window_size = max(MAX_SENTENCES_PER_CHUNK + 1, CHUNK_PLANNING_WINDOW_SENTENCES)
+    window_overlap = max(0, min(CHUNK_PLANNING_WINDOW_OVERLAP, window_size - 1))
+    step = max(1, window_size - window_overlap)
+
+    global_breaks: list[int] = []
+    for start in range(0, len(sentences), step):
+        end = min(start + window_size, len(sentences))
+        window_sentences = sentences[start:end]
+
+        local_breaks = _choose_breakpoints_for_window(window_sentences, llm)
+        for local_break in local_breaks:
+            global_break = start + local_break
+            if global_break < len(sentences) - 1:
+                global_breaks.append(global_break)
+
+        if end >= len(sentences):
+            break
+
+    normalized_breaks = _normalize_breakpoints(global_breaks, len(sentences))
+    return normalized_breaks if normalized_breaks else _fallback_breakpoints(len(sentences))
 
 
 def enforce_chunk_size_rules(breaks: list[int], sentence_count: int) -> list[int]:
@@ -297,7 +368,11 @@ def create_agent_tools(chunks: list[Chunk], bm25: BM25Okapi, top_k: int) -> list
 
 def create_rag_agent(chunks: list[Chunk], bm25: BM25Okapi, top_k: int) -> Any:
     """Build a ReAct-style answering agent with BM25 retrieval tools."""
-    llm = ChatOpenAI(model=LLM_MODEL, temperature=0)
+    llm = ChatOpenAI(
+        model=LLM_MODEL,
+        temperature=0,
+        max_tokens=ANSWERING_LLM_MAX_OUTPUT_TOKENS,
+    )
     tools = create_agent_tools(chunks, bm25, top_k)
     return create_react_agent(model=llm, tools=tools)
 
@@ -328,7 +403,11 @@ def run_agentic_bm25_pipeline(query: str, texts_dir: Path, top_k: int) -> str:
     print(f"Loaded {len(docs)} documents")
 
     print("\n[2] Building agentic chunks...")
-    chunking_llm = ChatOpenAI(model=LLM_MODEL, temperature=0)
+    chunking_llm = ChatOpenAI(
+        model=LLM_MODEL,
+        temperature=0,
+        max_tokens=CHUNKING_LLM_MAX_OUTPUT_TOKENS,
+    )
     chunks = agentic_chunk_documents(docs, chunking_llm)
     print(f"Created {len(chunks)} agentic chunks")
 
@@ -360,8 +439,10 @@ def run_agentic_bm25_pipeline(query: str, texts_dir: Path, top_k: int) -> str:
 
 
 def main() -> None:
+    load_dotenv_file()
     args = parse_args()
-    run_agentic_bm25_pipeline(args.query, args.texts_dir, args.top_k)
+    texts_dir = resolve_texts_dir(args.texts_dir)
+    run_agentic_bm25_pipeline(args.query, texts_dir, args.top_k)
 
 
 if __name__ == "__main__":
