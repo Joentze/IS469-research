@@ -1,41 +1,361 @@
 """
-use bm25 in-memory store
-https://docs.langchain.com/oss/python/integrations/retrievers/bm25
+Agentic BM25 pipeline with agentic chunking.
+
+This script uses an LLM to choose topic-aware chunk boundaries,
+indexes chunks with BM25, and runs a ReAct-style retrieval agent.
+
+References:
+- BM25: https://docs.langchain.com/oss/python/integrations/retrievers/bm25
+- ReAct agents: https://docs.langchain.com/oss/python/langchain/agents
 """
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from langchain_core.messages import HumanMessage
+from langchain_core.tools import tool
+from langchain_openai import ChatOpenAI
+from langgraph.prebuilt import create_react_agent
 from rank_bm25 import BM25Okapi
 
-# Your documents
-docs = [
-    "Apple Inc. reported a 10% increase in quarterly revenue, driven by strong iPhone sales.",
-    "Tesla announced the launch of its new Model Y, targeting the mid-range EV market.",
-    "Federal Reserve raised interest rates by 0.25%, citing inflation concerns.",
-    "Goldman Sachs forecasts a bullish trend in the stock market for 2026.",
-    "Amazon's cloud division, AWS, saw a 15% growth in Q1 2026.",
-    "JP Morgan reported higher profits due to increased trading activity.",
-    "Microsoft's Azure revenue grew by 20% year-over-year.",
-    "Meta Platforms faces regulatory scrutiny over data privacy issues.",
-    "Bank of America expects mortgage rates to remain stable throughout 2026.",
-    "Nvidia's GPU sales surge as demand for AI chips increases."
-]
 
-# Tokenize documents
-tokenized_docs = [doc.lower().split() for doc in docs]
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+)
+logger = logging.getLogger(__name__)
 
-# Build BM25 index
-bm25 = BM25Okapi(tokenized_docs)
+# Models
+LLM_MODEL = "gpt-4o-mini"
 
-# Example query
-query = "Which company reported the highest cloud revenue growth in 2026?"
-tokenized_query = query.lower().split()
+# Paths and defaults
+TEXTS_DIR = Path(__file__).resolve().parents[2] / "texts"
+DEFAULT_QUERY = "Explain how cloud revenue trends changed across companies."
 
-# Get scores for all docs
-scores = bm25.get_scores(tokenized_query)
+# Agentic chunking knobs
+MAX_SENTENCES_PER_CHUNK = 6
+MIN_SENTENCES_PER_CHUNK = 2
+OVERLAP_SENTENCES = 1
 
-# Retrieve top 2 documents
-import numpy as np
-top_n = np.argsort(scores)[::-1][:2]
-results = [docs[i] for i in top_n]
 
-# Print results
-for doc in results:
-    print(doc)
+@dataclass(frozen=True)
+class Chunk:
+    """Represents one agentically chunked unit and its source metadata."""
+
+    file_name: str
+    chunk_index: int
+    text: str
+
+
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments for retrieval options."""
+    parser = argparse.ArgumentParser(description="Agentic BM25 retrieval on markdown files")
+    parser.add_argument("--query", default=DEFAULT_QUERY, help="Question to ask")
+    parser.add_argument("--top-k", type=int, default=5, help="Chunks to return per search")
+    parser.add_argument(
+        "--texts-dir",
+        type=Path,
+        default=TEXTS_DIR,
+        help="Directory containing markdown files",
+    )
+    return parser.parse_args()
+
+
+def tokenize_for_bm25(text: str) -> list[str]:
+    """Tokenization for BM25 scoring (word tokens, lowercased)."""
+    return re.findall(r"\b[a-z0-9]+\b", text.lower())
+
+
+def load_markdown_documents(texts_dir: Path) -> list[tuple[str, str]]:
+    """Load markdown files from texts directory."""
+    if not texts_dir.exists() or not texts_dir.is_dir():
+        raise FileNotFoundError(f"Texts directory not found: {texts_dir}")
+
+    markdown_files = sorted(texts_dir.glob("*.md"))
+    if not markdown_files:
+        raise FileNotFoundError(f"No markdown files found in: {texts_dir}")
+
+    docs: list[tuple[str, str]] = []
+    for file_path in markdown_files:
+        content = file_path.read_text(encoding="utf-8", errors="ignore").strip()
+        if content:
+            docs.append((file_path.name, content))
+
+    if not docs:
+        raise ValueError(f"All markdown files in {texts_dir} were empty")
+
+    return docs
+
+
+def split_into_sentences(text: str) -> list[str]:
+    """Split text into sentence-like units."""
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    return [s.strip() for s in sentences if s and s.strip()]
+
+
+def _normalize_breakpoints(raw_breakpoints: list[int], sentence_count: int) -> list[int]:
+    """Keep sorted valid sentence-end indexes for chunk boundaries."""
+    if sentence_count <= 1:
+        return []
+    return sorted({idx for idx in raw_breakpoints if 0 <= idx < sentence_count - 1})
+
+
+def _fallback_breakpoints(sentence_count: int) -> list[int]:
+    """Deterministic fallback if chunk-planning output is invalid."""
+    if sentence_count <= MAX_SENTENCES_PER_CHUNK:
+        return []
+
+    breaks: list[int] = []
+    idx = MAX_SENTENCES_PER_CHUNK - 1
+    while idx < sentence_count - 1:
+        breaks.append(idx)
+        idx += MAX_SENTENCES_PER_CHUNK
+    return breaks
+
+
+def choose_chunk_breakpoints_with_agent(sentences: list[str], llm: ChatOpenAI) -> list[int]:
+    """
+    Ask an LLM to propose chunk boundaries.
+
+    Returns sentence indexes where a boundary should be inserted after that index.
+    """
+    if len(sentences) <= MAX_SENTENCES_PER_CHUNK:
+        return []
+
+    numbered_sentences = "\n".join(f"{i}: {sentence}" for i, sentence in enumerate(sentences))
+    prompt = (
+        "You are a chunking planner for a retrieval system.\n"
+        "Group adjacent sentences into coherent chunks by topic shifts.\n"
+        "Rules:\n"
+        f"- Each chunk should have {MIN_SENTENCES_PER_CHUNK} to {MAX_SENTENCES_PER_CHUNK} sentences when possible.\n"
+        "- Prefer boundaries where the topic changes.\n"
+        "- Return ONLY valid JSON with schema: {\"break_after\": [int, int, ...]}\n"
+        "- Do not include markdown or explanations.\n\n"
+        "Sentences:\n"
+        f"{numbered_sentences}"
+    )
+
+    try:
+        response = llm.invoke(prompt)
+        text = str(getattr(response, "content", "")).strip()
+        parsed = json.loads(text)
+        raw_breaks = parsed.get("break_after", [])
+        if not isinstance(raw_breaks, list):
+            return _fallback_breakpoints(len(sentences))
+        int_breaks = [int(x) for x in raw_breaks]
+        return _normalize_breakpoints(int_breaks, len(sentences))
+    except Exception:
+        return _fallback_breakpoints(len(sentences))
+
+
+def enforce_chunk_size_rules(breaks: list[int], sentence_count: int) -> list[int]:
+    """Adjust boundaries to avoid tiny chunks and very large chunks."""
+    if sentence_count <= 1:
+        return []
+
+    all_breaks = _normalize_breakpoints(breaks, sentence_count)
+    if not all_breaks:
+        return _fallback_breakpoints(sentence_count)
+
+    filtered: list[int] = []
+    start = 0
+    for brk in all_breaks:
+        chunk_len = brk - start + 1
+        if chunk_len >= MIN_SENTENCES_PER_CHUNK:
+            filtered.append(brk)
+            start = brk + 1
+
+    with_caps: list[int] = []
+    start = 0
+    for brk in filtered + [sentence_count - 1]:
+        while brk - start + 1 > MAX_SENTENCES_PER_CHUNK:
+            cap_break = start + MAX_SENTENCES_PER_CHUNK - 1
+            if cap_break < sentence_count - 1:
+                with_caps.append(cap_break)
+            start = cap_break + 1
+        if brk < sentence_count - 1:
+            with_caps.append(brk)
+        start = brk + 1
+
+    return _normalize_breakpoints(with_caps, sentence_count)
+
+
+def build_chunks_from_breakpoints(
+    sentences: list[str],
+    breakpoints: list[int],
+    file_name: str,
+) -> list[Chunk]:
+    """Materialize chunks from sentence breakpoints with sentence overlap."""
+    chunks: list[Chunk] = []
+    start = 0
+    chunk_index = 0
+
+    for brk in breakpoints + [len(sentences) - 1]:
+        if brk < start:
+            continue
+        chunk_sentences = sentences[start : brk + 1]
+        if not chunk_sentences:
+            continue
+
+        chunks.append(
+            Chunk(
+                file_name=file_name,
+                chunk_index=chunk_index,
+                text=" ".join(chunk_sentences).strip(),
+            )
+        )
+        chunk_index += 1
+
+        if OVERLAP_SENTENCES > 0:
+            start = max(brk + 1 - OVERLAP_SENTENCES, 0)
+        else:
+            start = brk + 1
+
+        if start >= len(sentences):
+            break
+
+    return chunks
+
+
+def agentic_chunk_documents(docs: list[tuple[str, str]], llm: ChatOpenAI) -> list[Chunk]:
+    """Chunk documents with LLM-selected semantic/topic boundaries."""
+    chunked_docs: list[Chunk] = []
+
+    for file_name, text in docs:
+        sentences = split_into_sentences(text)
+        if not sentences:
+            continue
+
+        if len(sentences) <= MAX_SENTENCES_PER_CHUNK:
+            chunked_docs.append(Chunk(file_name=file_name, chunk_index=0, text=" ".join(sentences)))
+            continue
+
+        raw_breaks = choose_chunk_breakpoints_with_agent(sentences, llm)
+        breaks = enforce_chunk_size_rules(raw_breaks, len(sentences))
+        chunked_docs.extend(build_chunks_from_breakpoints(sentences, breaks, file_name))
+
+    return chunked_docs
+
+
+def create_bm25_index(chunks: list[Chunk]) -> BM25Okapi:
+    """Create BM25 index over chunk texts."""
+    tokenized_chunks = [tokenize_for_bm25(chunk.text) for chunk in chunks]
+    return BM25Okapi(tokenized_chunks)
+
+
+def create_agent_tools(chunks: list[Chunk], bm25: BM25Okapi, top_k: int) -> list:
+    """Create retrieval tools consumed by the ReAct agent."""
+
+    @tool
+    def search_bm25_chunks(query: str, k: int = top_k) -> str:
+        """Search the BM25 index and return top matching chunks."""
+        if not query.strip():
+            return "Query is empty."
+
+        query_tokens = tokenize_for_bm25(query)
+        if not query_tokens:
+            return "Query does not contain valid alphanumeric tokens."
+
+        scores = bm25.get_scores(query_tokens)
+        effective_k = max(1, min(k, len(chunks)))
+        ranked_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:effective_k]
+
+        lines = [f"Top {effective_k} BM25 chunks:"]
+        for rank, idx in enumerate(ranked_indices, start=1):
+            chunk = chunks[idx]
+            preview = re.sub(r"\s+", " ", chunk.text).strip()
+            preview = preview[:300] + "..." if len(preview) > 300 else preview
+            lines.append(
+                f"[{rank}] score={scores[idx]:.4f} | source={chunk.file_name} | chunk={chunk.chunk_index}"
+            )
+            lines.append(preview)
+            lines.append("-")
+
+        return "\n".join(lines)
+
+    @tool
+    def get_chunk_count() -> str:
+        """Return number of chunks currently indexed by BM25."""
+        return f"Chunks in BM25 index: {len(chunks)}"
+
+    return [search_bm25_chunks, get_chunk_count]
+
+
+def create_rag_agent(chunks: list[Chunk], bm25: BM25Okapi, top_k: int) -> Any:
+    """Build a ReAct-style answering agent with BM25 retrieval tools."""
+    llm = ChatOpenAI(model=LLM_MODEL, temperature=0)
+    tools = create_agent_tools(chunks, bm25, top_k)
+    return create_react_agent(model=llm, tools=tools)
+
+
+def extract_final_text(agent_result: dict[str, Any]) -> str:
+    """Extract assistant text from LangGraph agent output."""
+    messages = agent_result.get("messages", [])
+    if messages:
+        final_message = messages[-1]
+        content = getattr(final_message, "content", "")
+        if isinstance(content, list):
+            return "\n".join(str(part) for part in content)
+        return str(content)
+    return str(agent_result)
+
+
+def run_agentic_bm25_pipeline(query: str, texts_dir: Path, top_k: int) -> str:
+    """Run agentic chunking -> BM25 indexing -> agentic retrieval answering."""
+    if not os.getenv("OPENAI_API_KEY"):
+        raise EnvironmentError("OPENAI_API_KEY is not set.")
+
+    print("=" * 60)
+    print("AGENTIC BM25 PIPELINE - AGENTIC CHUNKING + AGENTIC RETRIEVAL")
+    print("=" * 60)
+
+    print("\n[1] Loading source documents...")
+    docs = load_markdown_documents(texts_dir)
+    print(f"Loaded {len(docs)} documents")
+
+    print("\n[2] Building agentic chunks...")
+    chunking_llm = ChatOpenAI(model=LLM_MODEL, temperature=0)
+    chunks = agentic_chunk_documents(docs, chunking_llm)
+    print(f"Created {len(chunks)} agentic chunks")
+
+    print("\n[3] Building BM25 index...")
+    bm25 = create_bm25_index(chunks)
+    print("BM25 index ready")
+
+    print("\n[4] Creating ReAct retrieval agent...")
+    rag_agent = create_rag_agent(chunks, bm25, top_k)
+
+    print(f"\n[5] Query: {query}")
+    result = rag_agent.invoke(
+        {
+            "messages": [
+                HumanMessage(
+                    content=(
+                        "Use the available tools to retrieve evidence before answering. "
+                        f"Question: {query}"
+                    )
+                )
+            ]
+        }
+    )
+
+    answer = extract_final_text(result)
+    print("\nAnswer:")
+    print(answer)
+    return answer
+
+
+def main() -> None:
+    args = parse_args()
+    run_agentic_bm25_pipeline(args.query, args.texts_dir, args.top_k)
+
+
+if __name__ == "__main__":
+    main()
