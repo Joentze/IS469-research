@@ -12,6 +12,7 @@ References:
 import json
 import os
 import re
+from pathlib import Path
 from typing import Any
 
 from langchain_chroma import Chroma
@@ -30,6 +31,8 @@ EMBEDDING_MODEL = "text-embedding-3-small"
 LLM_MODEL = "gpt-4o-mini"
 VECTOR_STORE_DIR = "./database"
 COLLECTION_NAME = "agentic_chunks_collection"
+DEFAULT_TEXTS_DIR = Path(__file__).parents[2] / "texts"
+TEXTS_DIR = os.getenv("TEXTS_DIR", str(DEFAULT_TEXTS_DIR))
 
 MAX_SENTENCES_PER_CHUNK = 6
 MIN_SENTENCES_PER_CHUNK = 2
@@ -42,42 +45,31 @@ OVERLAP_SENTENCES = 1
 
 
 def load_sample_documents() -> list[Document]:
-	"""Load sample data. Replace this with your dataset loader."""
-	return [
-		Document(
-			page_content=(
-				"Python is a high-level programming language. "
-				"It supports procedural, object-oriented, and functional styles. "
-				"Developers use Python for APIs, automation, and data analysis. "
-				"Python has a rich ecosystem for machine learning. "
-				"Libraries like pandas and NumPy are common in analytics workflows. "
-				"The language is often chosen for rapid prototyping."
-			),
-			metadata={"source": "python_overview.txt", "topic": "programming"},
-		),
-		Document(
-			page_content=(
-				"Retrieval augmented generation combines retrieval and generation. "
-				"A retriever fetches context from a vector store. "
-				"The LLM answers using the retrieved evidence. "
-				"This generally improves factual grounding. "
-				"Chunking strategy strongly affects retrieval quality. "
-				"Evaluation should include precision and citation quality."
-			),
-			metadata={"source": "rag_notes.txt", "topic": "rag"},
-		),
-		Document(
-			page_content=(
-				"ReAct agents reason in steps and call tools when needed. "
-				"Tool calls can retrieve context, run code, or query APIs. "
-				"After observing tool output, the agent updates its plan. "
-				"This loop helps with multi-step tasks. "
-				"RAG tools are a strong fit for grounded question answering. "
-				"Good prompts make tool usage more consistent."
-			),
-			metadata={"source": "agent_notes.txt", "topic": "agents"},
-		),
-	]
+	"""Load markdown documents from the texts directory."""
+	configured_path = Path(TEXTS_DIR).expanduser()
+	if not configured_path.exists() or not configured_path.is_dir():
+		raise FileNotFoundError(
+			f"Could not find texts directory: {configured_path}. "
+			"Set TEXTS_DIR to a valid folder path."
+		)
+
+	markdown_files = sorted(configured_path.glob("*.md"))
+	if not markdown_files:
+		raise ValueError(f"No .md files found in texts directory: {configured_path}")
+
+	documents: list[Document] = []
+	for file_path in markdown_files:
+		content = file_path.read_text(encoding="utf-8", errors="ignore").strip()
+		if not content:
+			continue
+		documents.append(
+			Document(
+				page_content=content,
+				metadata={"source": file_path.name, "path": str(file_path)},
+			)
+		)
+
+	return documents
 
 
 # ============================================================================
