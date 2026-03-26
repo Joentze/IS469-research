@@ -32,12 +32,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ============================================================================
+# CONFIGURATION
+# ============================================================================
+
 # Models
 LLM_MODEL = "gpt-4o-mini"
 
 # Paths and defaults
-TEXTS_DIR = Path(__file__).resolve().parents[2] / "texts"
+DEFAULT_TEXTS_DIR = Path(__file__).resolve().parents[2] / "texts"
+TEXTS_DIR = Path(os.getenv("TEXTS_DIR", str(DEFAULT_TEXTS_DIR))).expanduser()
 DEFAULT_QUERY = "Explain how cloud revenue trends changed across companies."
+DEFAULT_TOP_K = 5
 
 # Agentic chunking knobs
 MAX_SENTENCES_PER_CHUNK = 6
@@ -58,7 +64,7 @@ def parse_args() -> argparse.Namespace:
     """Parse command-line arguments for retrieval options."""
     parser = argparse.ArgumentParser(description="Agentic BM25 retrieval on markdown files")
     parser.add_argument("--query", default=DEFAULT_QUERY, help="Question to ask")
-    parser.add_argument("--top-k", type=int, default=5, help="Chunks to return per search")
+    parser.add_argument("--top-k", type=int, default=DEFAULT_TOP_K, help="Chunks to return per search")
     parser.add_argument(
         "--texts-dir",
         type=Path,
@@ -142,8 +148,9 @@ def choose_chunk_breakpoints_with_agent(sentences: list[str], llm: ChatOpenAI) -
         f"{numbered_sentences}"
     )
 
+    response = llm.invoke(prompt)
+
     try:
-        response = llm.invoke(prompt)
         text = str(getattr(response, "content", "")).strip()
         parsed = json.loads(text)
         raw_breaks = parsed.get("break_after", [])
@@ -151,7 +158,7 @@ def choose_chunk_breakpoints_with_agent(sentences: list[str], llm: ChatOpenAI) -
             return _fallback_breakpoints(len(sentences))
         int_breaks = [int(x) for x in raw_breaks]
         return _normalize_breakpoints(int_breaks, len(sentences))
-    except Exception:
+    except (json.JSONDecodeError, TypeError, ValueError):
         return _fallback_breakpoints(len(sentences))
 
 

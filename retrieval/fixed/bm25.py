@@ -19,8 +19,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ============================================================================
+# CONFIGURATION
+# ============================================================================
+
 TEXTS_DIR = Path(__file__).resolve().parents[2] / "texts"
 DEFAULT_QUERY = "Which company reported the highest cloud revenue growth in 2026?"
+DEFAULT_TOP_K = 5
+FIXED_CHUNK_SIZE = 800
+FIXED_CHUNK_OVERLAP = 200
 
 
 @dataclass(frozen=True)
@@ -36,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     """Parse command-line arguments for retrieval options."""
     parser = argparse.ArgumentParser(description="BM25 retrieval on markdown files")
     parser.add_argument("--query", default=DEFAULT_QUERY, help="Search query")
-    parser.add_argument("--top-k", type=int, default=5, help="Number of results to return")
+    parser.add_argument("--top-k", type=int, default=DEFAULT_TOP_K, help="Number of results to return")
     parser.add_argument(
         "--texts-dir",
         type=Path,
@@ -46,13 +53,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--chunk-size",
         type=int,
-        default=800,
+        default=FIXED_CHUNK_SIZE,
         help="Character length of each chunk",
     )
     parser.add_argument(
         "--chunk-overlap",
         type=int,
-        default=200,
+        default=FIXED_CHUNK_OVERLAP,
         help="Character overlap between neighboring chunks",
     )
     return parser.parse_args()
@@ -86,8 +93,8 @@ def load_markdown_documents(texts_dir: Path) -> list[tuple[str, str]]:
 
 def fixed_size_character_sliding_window(
     text: str,
-    chunk_size: int = 80,
-    chunk_overlap: int = 20,
+    chunk_size: int = FIXED_CHUNK_SIZE,
+    chunk_overlap: int = FIXED_CHUNK_OVERLAP,
 ) -> list[str]:
     """Split text into fixed-size character chunks with overlap."""
     if chunk_size <= 0:

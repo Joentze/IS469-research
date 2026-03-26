@@ -19,8 +19,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ============================================================================
+# CONFIGURATION
+# ============================================================================
+
 TEXTS_DIR = Path(__file__).resolve().parents[2] / "texts"
 DEFAULT_QUERY = "Which company reported the highest cloud revenue growth in 2026?"
+DEFAULT_TOP_K = 5
+SEMANTIC_MAX_CHUNK_CHARS = 700
+SEMANTIC_SIMILARITY_THRESHOLD = 0.15
 
 
 @dataclass(frozen=True)
@@ -36,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     """Parse command-line arguments for retrieval options."""
     parser = argparse.ArgumentParser(description="BM25 retrieval on markdown files")
     parser.add_argument("--query", default=DEFAULT_QUERY, help="Search query")
-    parser.add_argument("--top-k", type=int, default=5, help="Number of results to return")
+    parser.add_argument("--top-k", type=int, default=DEFAULT_TOP_K, help="Number of results to return")
     parser.add_argument(
         "--texts-dir",
         type=Path,
@@ -148,8 +155,8 @@ def build_chunks(docs: list[tuple[str, str]]) -> list[Chunk]:
     for file_name, doc_text in docs:
         chunks = semantic_chunk_text(
             doc_text,
-            max_chunk_chars=700,
-            similarity_threshold=0.15,
+            max_chunk_chars=SEMANTIC_MAX_CHUNK_CHARS,
+            similarity_threshold=SEMANTIC_SIMILARITY_THRESHOLD,
         )
         for chunk_index, chunk_text in enumerate(chunks):
             chunked_docs.append(
