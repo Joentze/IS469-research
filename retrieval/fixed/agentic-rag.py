@@ -11,6 +11,8 @@ References:
 - Fixed Chunking: https://docs.langchain.com/oss/python/modules/data_connection/document_loaders/split_code
 """
 
+import os
+from pathlib import Path
 from typing import Any
 
 from langchain_chroma import Chroma
@@ -31,6 +33,8 @@ EMBEDDING_MODEL = "text-embedding-3-small"
 LLM_MODEL = "gpt-4o-mini"
 VECTOR_STORE_DIR = "./database"
 COLLECTION_NAME = "fixed_chunks_collection"
+DEFAULT_TEXTS_DIR = Path(__file__).parents[2] / "texts"
+TEXTS_DIR = os.getenv("TEXTS_DIR", str(DEFAULT_TEXTS_DIR))
 
 
 # ============================================================================
@@ -38,41 +42,41 @@ COLLECTION_NAME = "fixed_chunks_collection"
 # ============================================================================
 
 
+def resolve_texts_directory() -> Path:
+    """Resolve the texts directory from TEXTS_DIR or project default."""
+    configured_path = Path(TEXTS_DIR).expanduser()
+
+    if configured_path.exists() and configured_path.is_dir():
+        return configured_path
+
+    raise FileNotFoundError(
+        f"Could not find texts directory: {configured_path}. "
+        "Set TEXTS_DIR to a valid folder path."
+    )
+
+
 def load_sample_documents() -> list[Document]:
-    """
-    Load sample documents for testing.
-    In production, replace with your actual document loading logic.
-    """
-    docs = [
-        Document(
-            page_content="""
-            Python is a high-level programming language known for its simplicity and readability.
-            It supports multiple programming paradigms including procedural, object-oriented, and
-            functional programming. Python is widely used in web development, data science,
-            artificial intelligence, and automation.
-            """,
-            metadata={"source": "python_intro.md", "topic": "programming"},
-        ),
-        Document(
-            page_content="""
-            LangChain is a framework for developing applications powered by language models.
-            It enables the development of applications that are data-aware and agentic.
-            LangChain provides integrations with various LLM providers and vector stores,
-            making it easier to build RAG pipelines and agents.
-            """,
-            metadata={"source": "langchain_overview.md", "topic": "ai_frameworks"},
-        ),
-        Document(
-            page_content="""
-            Retrieval Augmented Generation (RAG) is a technique that combines information
-            retrieval with generative models. It works by retrieving relevant documents
-            from a knowledge base and using them to augment the context provided to a
-            language model for generating responses.
-            """,
-            metadata={"source": "rag_explained.md", "topic": "ai_techniques"},
-        ),
-    ]
-    return docs
+    """Load markdown documents from the texts directory."""
+    texts_dir = resolve_texts_directory()
+    markdown_files = sorted(texts_dir.glob("*.md"))
+
+    if not markdown_files:
+        raise ValueError(f"No .md files found in texts directory: {texts_dir}")
+
+    documents: list[Document] = []
+    for file_path in markdown_files:
+        content = file_path.read_text(encoding="utf-8", errors="ignore").strip()
+        if not content:
+            continue
+
+        documents.append(
+            Document(
+                page_content=content,
+                metadata={"source": file_path.name, "path": str(file_path)},
+            )
+        )
+
+    return documents
 
 
 def chunk_documents_fixed(documents: list[Document]) -> list[Document]:
