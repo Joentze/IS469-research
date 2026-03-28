@@ -2066,6 +2066,23 @@ typing-extensions = ">=4.7.0,<5.0.0"
 uuid-utils = ">=0.12.0,<1.0"
 
 [[package]]
+name = "langchain-openai"
+version = "1.1.11"
+description = "An integration package connecting OpenAI and LangChain"
+optional = false
+python-versions = "<4.0.0,>=3.10.0"
+groups = ["main"]
+files = [
+    {file = "langchain_openai-1.1.11-py3-none-any.whl", hash = "sha256:a03596221405d38d6852fb865467cb0d9ff9e79f335905eb6a576e8c4874ac71"},
+    {file = "langchain_openai-1.1.11.tar.gz", hash = "sha256:44b003a2960d1f6699f23721196b3b97d0c420d2e04444950869213214b7a06a"},
+]
+
+[package.dependencies]
+langchain-core = ">=1.2.18,<2.0.0"
+openai = ">=2.26.0,<3.0.0"
+tiktoken = ">=0.7.0,<1.0.0"
+
+[[package]]
 name = "langchain-text-splitters"
 version = "1.1.1"
 description = "LangChain text splitting utilities"
@@ -6815,4 +6832,4 @@ cffi = ["cffi (>=1.17,<2.0) ; platform_python_implementation != \"PyPy\" and pyt
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "ae64f4c098cdd29b82ff101c8be32186dcb65ad5c4ccf18e487029dea1645287"
+content-hash = "15adc2e10aa2ee5e6a3ac85cb63d31f66a28956f8741fe67f3cbcb842ee0454a"
