@@ -12,24 +12,52 @@ References:
 
 import os
 import re
+from pathlib import Path
 from typing import Any
 
 from langchain_chroma import Chroma
+from langchain.agents import create_agent
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langgraph.prebuilt import create_react_agent
 
 
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
 
+
+def load_project_env(project_root: Path) -> None:
+	"""Load key-value pairs from .env into process environment."""
+	env_path = project_root / ".env"
+	if not env_path.exists() or not env_path.is_file():
+		return
+
+	for raw_line in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+		line = raw_line.strip()
+		if not line or line.startswith("#") or "=" not in line:
+			continue
+
+		key, value = line.split("=", 1)
+		key = key.strip()
+		value = value.strip().strip('"').strip("'")
+		if key and key not in os.environ:
+			os.environ[key] = value
+
+	if "OPENAI_API_KEY" not in os.environ and "API_KEY" in os.environ:
+		os.environ["OPENAI_API_KEY"] = os.environ["API_KEY"]
+
 EMBEDDING_MODEL = "text-embedding-3-small"
 LLM_MODEL = "gpt-4o-mini"
 VECTOR_STORE_DIR = "./database"
 COLLECTION_NAME = "semantic_chunks_collection"
+BATCH_SIZE = 5000
+PROJECT_ROOT = Path(__file__).parents[2]
+load_project_env(PROJECT_ROOT)
+DEFAULT_TEXTS_DIR = PROJECT_ROOT / "texts"
+TEXTS_DIR = os.getenv("TEXTS_DIR", str(DEFAULT_TEXTS_DIR))
+FORCE_REINDEX = os.getenv("FORCE_REINDEX", "false").lower() == "true"
 
 MAX_SENTENCES_PER_CHUNK = 5
 OVERLAP_SENTENCES = 1
@@ -42,39 +70,31 @@ BREAKPOINT_PERCENTILE = 30.0
 
 
 def load_sample_documents() -> list[Document]:
-	"""Load sample data. Replace this with your dataset loader."""
-	return [
-		Document(
-			page_content=(
-				"Python is a high-level programming language. "
-				"It is popular for data science and automation. "
-				"The language emphasizes readability and fast iteration. "
-				"Many teams use Python to build retrieval pipelines. "
-				"Python also has mature AI tooling and integrations."
-			),
-			metadata={"source": "python_overview.txt", "topic": "programming"},
-		),
-		Document(
-			page_content=(
-				"Retrieval augmented generation combines retrieval and generation. "
-				"The retriever finds relevant context from a vector store. "
-				"The language model then answers using grounded evidence. "
-				"This approach reduces hallucinations in many workflows. "
-				"Evaluation still matters because retrieval quality varies by corpus."
-			),
-			metadata={"source": "rag_notes.txt", "topic": "rag"},
-		),
-		Document(
-			page_content=(
-				"Agentic systems can call tools during reasoning. "
-				"A ReAct agent alternates between thinking and acting. "
-				"Tool calls often include retrieval, calculators, or APIs. "
-				"When retrieval is available, agents can answer with better context. "
-				"This is useful for multi-step question answering."
-			),
-			metadata={"source": "agent_notes.txt", "topic": "agents"},
-		),
-	]
+	"""Load markdown documents from the texts directory."""
+	configured_path = Path(TEXTS_DIR).expanduser()
+	if not configured_path.exists() or not configured_path.is_dir():
+		raise FileNotFoundError(
+			f"Could not find texts directory: {configured_path}. "
+			"Set TEXTS_DIR to a valid folder path."
+		)
+
+	markdown_files = sorted(configured_path.glob("*.md"))
+	if not markdown_files:
+		raise ValueError(f"No .md files found in texts directory: {configured_path}")
+
+	documents: list[Document] = []
+	for file_path in markdown_files:
+		content = file_path.read_text(encoding="utf-8", errors="ignore").strip()
+		if not content:
+			continue
+		documents.append(
+			Document(
+				page_content=content,
+				metadata={"source": file_path.name, "path": str(file_path)},
+			)
+		)
+
+	return documents
 
 
 # ============================================================================
@@ -199,19 +219,29 @@ def initialize_vector_store(documents: list[Document], embeddings: OpenAIEmbeddi
 		persist_directory=VECTOR_STORE_DIR,
 	)
 
-	# Rebuild collection each run so repeated runs do not duplicate chunks.
-	try:
+	existing_count = vector_store._collection.count()
+
+	if existing_count > 0 and not FORCE_REINDEX:
+		print(
+			f"Using existing vector store with {existing_count} chunks. "
+			"Skipping re-indexing."
+		)
+		return vector_store
+
+	if FORCE_REINDEX and existing_count > 0:
+		print("FORCE_REINDEX=true detected. Rebuilding vector store...")
 		vector_store.delete_collection()
 		vector_store = Chroma(
 			collection_name=COLLECTION_NAME,
 			embedding_function=embeddings,
 			persist_directory=VECTOR_STORE_DIR,
 		)
-	except Exception:
-		pass
 
 	if documents:
-		vector_store.add_documents(documents)
+		for start in range(0, len(documents), BATCH_SIZE):
+			batch = documents[start : start + BATCH_SIZE]
+			vector_store.add_documents(batch)
+		print(f"Added {len(documents)} chunks to vector store")
 
 	return vector_store
 
@@ -251,7 +281,7 @@ def create_rag_agent(vector_store: Chroma) -> Any:
 	"""Build a ReAct-style agent with semantic retrieval tools."""
 	llm = ChatOpenAI(model=LLM_MODEL, temperature=0)
 	tools = create_agent_tools(vector_store)
-	return create_react_agent(model=llm, tools=tools)
+	return create_agent(model=llm, tools=tools)
 
 
 def extract_final_text(agent_result: dict[str, Any]) -> str:
@@ -272,7 +302,7 @@ def extract_final_text(agent_result: dict[str, Any]) -> str:
 
 
 def run_agentic_rag_pipeline(query: str) -> str:
-	"""Run semantic chunking -> indexing -> agentic retrieval + answer generation."""
+	"""Run semantic chunking -> indexing -> retrieval-based answering."""
 	if not os.getenv("OPENAI_API_KEY"):
 		raise EnvironmentError("OPENAI_API_KEY is not set.")
 
@@ -306,5 +336,5 @@ def run_agentic_rag_pipeline(query: str) -> str:
 
 
 if __name__ == "__main__":
-	test_query = "Explain how agentic RAG works with semantic chunking."
+    test_query = "What is Amazon's year-over-year change in revenue from FY2016 to FY2017 (in units of percents and round to one decimal place)? Calculate what was asked by utilizing the line items clearly shown in the statement of income."
 	run_agentic_rag_pipeline(test_query)
