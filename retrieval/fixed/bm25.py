@@ -26,8 +26,8 @@ logger = logging.getLogger(__name__)
 TEXTS_DIR = Path(__file__).resolve().parents[2] / "texts"
 DEFAULT_QUERY = "Which company reported the highest cloud revenue growth in 2026?"
 DEFAULT_TOP_K = 5
-FIXED_CHUNK_SIZE = 800
-FIXED_CHUNK_OVERLAP = 200
+CHUNK_SIZE = 1000
+CHUNK_OVERLAP = 200
 
 
 @dataclass(frozen=True)
@@ -53,13 +53,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--chunk-size",
         type=int,
-        default=FIXED_CHUNK_SIZE,
+        default=CHUNK_SIZE,
         help="Character length of each chunk",
     )
     parser.add_argument(
         "--chunk-overlap",
         type=int,
-        default=FIXED_CHUNK_OVERLAP,
+        default=CHUNK_OVERLAP,
         help="Character overlap between neighboring chunks",
     )
     return parser.parse_args()
@@ -93,8 +93,8 @@ def load_markdown_documents(texts_dir: Path) -> list[tuple[str, str]]:
 
 def fixed_size_character_sliding_window(
     text: str,
-    chunk_size: int = FIXED_CHUNK_SIZE,
-    chunk_overlap: int = FIXED_CHUNK_OVERLAP,
+    chunk_size: int = CHUNK_SIZE,
+    chunk_overlap: int = CHUNK_OVERLAP,
 ) -> list[str]:
     """Split text into fixed-size character chunks with overlap."""
     if chunk_size <= 0:

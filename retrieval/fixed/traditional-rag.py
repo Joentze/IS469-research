@@ -36,7 +36,7 @@ def load_project_env(project_root: Path) -> None:
  
  
 CHUNK_SIZE = 1000       # Max characters per chunk
-CHUNK_OVERLAP = 100     # Overlap between chunks for context preservation
+CHUNK_OVERLAP = 200     # Overlap between chunks for context preservation
 EMBEDDING_MODEL = "text-embedding-3-small"
 VECTOR_STORE_DIR = "./database"
 COLLECTION_NAME = "trad_rag_fixed_collection"
