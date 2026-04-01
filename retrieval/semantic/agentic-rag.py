@@ -59,9 +59,9 @@ DEFAULT_TEXTS_DIR = PROJECT_ROOT / "texts"
 TEXTS_DIR = os.getenv("TEXTS_DIR", str(DEFAULT_TEXTS_DIR))
 FORCE_REINDEX = os.getenv("FORCE_REINDEX", "false").lower() == "true"
 
-MAX_SENTENCES_PER_CHUNK = 5
-OVERLAP_SENTENCES = 1
-BREAKPOINT_PERCENTILE = 30.0
+MAX_SENTENCES_PER_CHUNK = 8
+OVERLAP_SENTENCES = 2
+BREAKPOINT_PERCENTILE = 70.0
 
 
 # ============================================================================
