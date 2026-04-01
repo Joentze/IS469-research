@@ -50,13 +50,14 @@ def load_project_env(project_root: Path) -> None:
 
 EMBEDDING_MODEL = "text-embedding-3-small"
 LLM_MODEL = "gpt-4o-mini"
-VECTOR_STORE_DIR = "./database"
-COLLECTION_NAME = "agentic_chunks_collection"
-BATCH_SIZE = 5000
 PROJECT_ROOT = Path(__file__).parents[2]
 load_project_env(PROJECT_ROOT)
 DEFAULT_TEXTS_DIR = PROJECT_ROOT / "texts"
 TEXTS_DIR = os.getenv("TEXTS_DIR", str(DEFAULT_TEXTS_DIR))
+DEFAULT_VECTOR_STORE_DIR = PROJECT_ROOT / "database_agentic"
+VECTOR_STORE_DIR = os.getenv("VECTOR_STORE_DIR", str(DEFAULT_VECTOR_STORE_DIR))
+COLLECTION_NAME = "agentic_bm25_chunks_collection"
+BATCH_SIZE = 5000
 FORCE_REINDEX = os.getenv("FORCE_REINDEX", "false").lower() == "true"
 
 MAX_SENTENCES_PER_CHUNK = 6
@@ -371,24 +372,32 @@ def run_agentic_rag_pipeline(query: str) -> str:
 	print("AGENTIC RAG PIPELINE - AGENTIC CHUNKING")
 	print("=" * 60)
 
-	print("\n[1] Loading source documents...")
-	docs = load_sample_documents()
-	print(f"Loaded {len(docs)} documents")
-
-	print("\n[2] Building agentic chunks...")
-	chunking_llm = ChatOpenAI(model=LLM_MODEL, temperature=0)
-	agentic_chunks = agentic_chunk_documents(docs, chunking_llm)
-	print(f"Created {len(agentic_chunks)} agentic chunks")
-
-	print("\n[3] Initializing ChromaDB...")
+	print("\n[1] Initializing ChromaDB...")
 	embeddings = OpenAIEmbeddings(model=EMBEDDING_MODEL)
-	vector_store = initialize_vector_store(agentic_chunks, embeddings)
-	print(f"Indexed {vector_store._collection.count()} chunks")
+	vector_store = initialize_vector_store([], embeddings)
+	existing_count = vector_store._collection.count()
+	print(f"Found {existing_count} chunks in vector store")
 
-	print("\n[4] Creating ReAct answering agent...")
+	if existing_count == 0 or FORCE_REINDEX:
+		print("\n[2] Loading source documents...")
+		docs = load_sample_documents()
+		print(f"Loaded {len(docs)} documents")
+
+		print("\n[3] Building agentic chunks...")
+		chunking_llm = ChatOpenAI(model=LLM_MODEL, temperature=0)
+		agentic_chunks = agentic_chunk_documents(docs, chunking_llm)
+		print(f"Created {len(agentic_chunks)} agentic chunks")
+
+		print("\n[4] Indexing agentic chunks...")
+		vector_store = initialize_vector_store(agentic_chunks, embeddings)
+		print(f"Indexed {vector_store._collection.count()} chunks")
+	else:
+		print("Skipping document loading and re-indexing because an existing vector store is available.")
+
+	print("\n[5] Creating ReAct answering agent...")
 	agent = create_rag_agent(vector_store)
 
-	print(f"\n[5] Query: {query}")
+	print(f"\n[6] Query: {query}")
 	result = agent.invoke({"messages": [HumanMessage(content=query)]})
 	answer = extract_final_text(result)
 
