@@ -36,8 +36,8 @@ LLM_MODEL = "gpt-4o-mini"
 VECTOR_STORE_DIR = "./database"
 COLLECTION_NAME = "hyde_fixed_chunks_collection"
 
-CHUNK_SIZE = 80
-CHUNK_OVERLAP = 20
+CHUNK_SIZE = 1000
+CHUNK_OVERLAP = 200
 TOP_K = 5
 
 RELEVANT_DOC_IDS = {4, 6}
