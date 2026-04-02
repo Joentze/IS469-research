@@ -1,0 +1,252 @@
+[
+  {
+    "query": "What is the fiscal year end date mentioned in the document?",
+    "reference_answer": "December 31, 2016",
+    "source": "070b34b2679e_1862b88f-4e6b-4251-be45-4833fc0a0126.md"
+  },
+  {
+    "query": "What is the aggregate market value of the voting and non-voting common equity held by non-affiliates of the registrant as of June 30, 2016?",
+    "reference_answer": "approximately $1.4 billion",
+    "source": "070b34b2679e_1862b88f-4e6b-4251-be45-4833fc0a0126.md"
+  },
+  {
+    "query": "What is the fiscal year end date mentioned in the document?",
+    "reference_answer": "December 31, 2019",
+    "source": "0000718877-20-000003 (1).md"
+  },
+  {
+    "query": "What is the aggregate market value of the registrant's Common Stock held by non-affiliates on June 30, 2019?",
+    "reference_answer": "$35,743,039,830",
+    "source": "0000718877-20-000003 (1).md"
+  },
+  {
+    "query": "What is the fiscal year ended date mentioned in the document?",
+    "reference_answer": "December 31, 2021",
+    "source": "525375f17372_f9519502-38b3-4e0b-94fa-b6a7138812a4.md"
+  },
+  {
+    "query": "What is the aggregate market value of the registrant’s common stock held by non-affiliates as of June 30, 2021?",
+    "reference_answer": "$35 billion",
+    "source": "525375f17372_f9519502-38b3-4e0b-94fa-b6a7138812a4.md"
+  },
+  {
+    "query": "What is the fiscal year ended date mentioned in the document?",
+    "reference_answer": "December 31, 2022",
+    "source": "41f4ae3b0fd2_5e924681-e9c4-4bfb-95db-ef7c484303e7.md"
+  },
+  {
+    "query": "What was the aggregate market value of the Registrant’s Common Stock held by non-affiliates as of June 30, 2022?",
+    "reference_answer": "$8.2 billion",
+    "source": "41f4ae3b0fd2_5e924681-e9c4-4bfb-95db-ef7c484303e7.md"
+  },
+  {
+    "query": "What is the fiscal year end date mentioned in the document?",
+    "reference_answer": "December 31, 2022",
+    "source": "3913440b21c7_corp-10k-2022.md"
+  },
+  {
+    "query": "What is the I.R.S. employer identification number for JPMorgan Chase & Co.?",
+    "reference_answer": "13-2624428",
+    "source": "3913440b21c7_corp-10k-2022.md"
+  },
+  {
+    "query": "What was Ulta Beauty's net income for the fourth quarter of fiscal 2022?",
+    "reference_answer": "$340.8 Million or $6.68 Per Diluted Share",
+    "source": "1265ff05c06c_2023-03-09_Ulta_Beauty_Announces_Fourth_Quarter_Fiscal_2022_164.md"
+  },
+  {
+    "query": "What was the percentage increase in comparable sales for the fourth quarter of fiscal 2022?",
+    "reference_answer": "15.6%",
+    "source": "1265ff05c06c_2023-03-09_Ulta_Beauty_Announces_Fourth_Quarter_Fiscal_2022_164.md"
+  },
+  {
+    "query": "What is the fiscal year ended date mentioned in the document?",
+    "reference_answer": "December 31, 2022",
+    "source": "060eca749bca_eb24002c-e050-45eb-806a-15264d59131c.md"
+  },
+  {
+    "query": "What is the trading symbol for Corning Incorporated's common stock?",
+    "reference_answer": "GLW",
+    "source": "060eca749bca_eb24002c-e050-45eb-806a-15264d59131c.md"
+  },
+  {
+    "query": "What is the effective date of Mary N. Dillon's appointment as President and Chief Executive Officer of Foot Locker, Inc.?",
+    "reference_answer": "September 1, 2022.",
+    "source": "0001539497-22-001461.md"
+  },
+  {
+    "query": "What was Richard A. Johnson's position at Foot Locker, Inc. before stepping down?",
+    "reference_answer": "President and Chief Executive Officer.",
+    "source": "0001539497-22-001461.md"
+  },
+  {
+    "query": "What is the fiscal year ended date mentioned in the document?",
+    "reference_answer": "December 31, 2020",
+    "source": "a6097e9da72e_c7b05bfa-5bb8-43b7-9580-9de362ef1e83.md"
+  },
+  {
+    "query": "What is the aggregate market value of the voting and non-voting common equity held by non-affiliates of the registrant as of June 30, 2020?",
+    "reference_answer": "approximately $38.7 billion",
+    "source": "a6097e9da72e_c7b05bfa-5bb8-43b7-9580-9de362ef1e83.md"
+  },
+  {
+    "query": "What is the fiscal year end date mentioned in the document?",
+    "reference_answer": "December 31, 2019",
+    "source": "0000718877-20-000003.md"
+  },
+  {
+    "query": "What is the aggregate market value of the registrant’s Common Stock held by non-affiliates on June 30, 2019?",
+    "reference_answer": "$35,743,039,830",
+    "source": "0000718877-20-000003.md"
+  },
+  {
+    "query": "What is the fiscal year end date mentioned in the document?",
+    "reference_answer": "January 31, 2018",
+    "source": "f24473ddfa1e_a25e7acb-aa07-49f3-8c0c-0c69e5a8d372.md"
+  },
+  {
+    "query": "What is the IRS Employer Identification No. for Walmart Inc.?",
+    "reference_answer": "71-0415188",
+    "source": "f24473ddfa1e_a25e7acb-aa07-49f3-8c0c-0c69e5a8d372.md"
+  },
+  {
+    "query": "What is the fiscal year ended date mentioned in the document?",
+    "reference_answer": "December 31, 2020",
+    "source": "0000936468-21-000013.md"
+  },
+  {
+    "query": "What is the aggregate market value of voting and non-voting common stock held by non-affiliates as of June 26, 2020?",
+    "reference_answer": "approximately $99.3 billion",
+    "source": "0000936468-21-000013.md"
+  },
+  {
+    "query": "What is the fiscal year end date mentioned in the document?",
+    "reference_answer": "December 31, 2019",
+    "source": "d4b7eb65212a_4d39f579-19d8-4119-b087-ee618abf82d6.md"
+  },
+  {
+    "query": "What is the aggregate market value of voting stock held by non-affiliates as of June 30, 2019?",
+    "reference_answer": "$ 786,284,080,955",
+    "source": "d4b7eb65212a_4d39f579-19d8-4119-b087-ee618abf82d6.md"
+  },
+  {
+    "query": "What is the fiscal year end date mentioned in the document?",
+    "reference_answer": "December 31, 2022.",
+    "source": "fca1aa15df45_b562e712-8266-493c-8ae8-e28f93404d2f.md"
+  },
+  {
+    "query": "What is the I.R.S. Employer Identification Number for PayPal Holdings, Inc.?",
+    "reference_answer": "47-2989869",
+    "source": "fca1aa15df45_b562e712-8266-493c-8ae8-e28f93404d2f.md"
+  },
+  {
+    "query": "What is the fiscal year end date for General Mills, Inc. as stated in the document?",
+    "reference_answer": "May 26, 2019",
+    "source": "423713b00c9f_0fd13703-8eed-4b60-b46c-b2b3199887dc.md"
+  },
+  {
+    "query": "What is the aggregate market value of Common Stock held by non-affiliates of General Mills, Inc. as of November 25, 2018?",
+    "reference_answer": "$25,879.8 million",
+    "source": "423713b00c9f_0fd13703-8eed-4b60-b46c-b2b3199887dc.md"
+  },
+  {
+    "query": "What is the fiscal year ended date mentioned in the document?",
+    "reference_answer": "December 31, 2022",
+    "source": "5bde16fe3f74_e4b97418-e95e-4391-b2d9-8c604c4950ac.md"
+  },
+  {
+    "query": "What is the I.R.S. Employer Identification No. for CVS Health Corporation?",
+    "reference_answer": "05-0494040",
+    "source": "5bde16fe3f74_e4b97418-e95e-4391-b2d9-8c604c4950ac.md"
+  },
+  {
+    "query": "What was the aggregate market value of PepsiCo, Inc. Common Stock held by nonaffiliates as of June 10, 2022?",
+    "reference_answer": "$224.2 billion",
+    "source": "0000077476-23-000007.md"
+  },
+  {
+    "query": "As of February 2, 2023, how many shares of PepsiCo, Inc. Common Stock were outstanding?",
+    "reference_answer": "1,377,251,316",
+    "source": "0000077476-23-000007.md"
+  },
+  {
+    "query": "What is the fiscal year ended date mentioned in the document?",
+    "reference_answer": "December 31, 2018",
+    "source": "f101968627d6_d1b055df-9e21-4013-a311-67c98e2eb16a.md"
+  },
+  {
+    "query": "What was the aggregate market value of the Registrant’s Common Stock held by non-affiliates as of June 30, 2018?",
+    "reference_answer": "$15.6 billion",
+    "source": "f101968627d6_d1b055df-9e21-4013-a311-67c98e2eb16a.md"
+  },
+  {
+    "query": "What is the fiscal year end date for Amcor PLC as stated in the document?",
+    "reference_answer": "June 30, 2023",
+    "source": "05cb5ac5483d_Annual_report__Section_13_and_15_d___not_S-K_Item_405_.md"
+  },
+  {
+    "query": "What is the Commission File Number for Amcor PLC?",
+    "reference_answer": "001-38932",
+    "source": "05cb5ac5483d_Annual_report__Section_13_and_15_d___not_S-K_Item_405_.md"
+  },
+  {
+    "query": "What is the fiscal year ended date mentioned in the document?",
+    "reference_answer": "December 31, 2020",
+    "source": "8599a23150f8_03692647-6ccc-4177-8ce9-13ac35692254.md"
+  },
+  {
+    "query": "What was the aggregate market value of the Registrant’s Common Stock held by non-affiliates as of June 30, 2020?",
+    "reference_answer": "$7.9 billion",
+    "source": "8599a23150f8_03692647-6ccc-4177-8ce9-13ac35692254.md"
+  },
+  {
+    "query": "What is the fiscal year ended date mentioned in the document?",
+    "reference_answer": "December 31, 2022",
+    "source": "67be1298bb07_ba508f4d-f3f5-4b6a-beba-e7bef231f5db.md"
+  },
+  {
+    "query": "What is the trading symbol for American Water Works Company, Inc.?",
+    "reference_answer": "AWK",
+    "source": "67be1298bb07_ba508f4d-f3f5-4b6a-beba-e7bef231f5db.md"
+  },
+  {
+    "query": "What is the fiscal year end date mentioned in the document?",
+    "reference_answer": "January 31, 2020",
+    "source": "833ed4c58492_af5415d9-0e07-4ba1-a6cc-bb3058a7f4e8.md"
+  },
+  {
+    "query": "What is the aggregate market value of the voting common stock held by non-affiliates as of July 31, 2019?",
+    "reference_answer": "$155,125,468,742",
+    "source": "833ed4c58492_af5415d9-0e07-4ba1-a6cc-bb3058a7f4e8.md"
+  },
+  {
+    "query": "What is the date of the earliest event reported in the Form 8-K?",
+    "reference_answer": "July 1, 2022 (June 30, 2022)",
+    "source": "45587cf9c6b5_Current_report.md"
+  },
+  {
+    "query": "What are the trading symbols for the Ordinary Shares and the 1.125% Guaranteed Senior Notes Due 2027?",
+    "reference_answer": "AMCR and AUKF/27",
+    "source": "45587cf9c6b5_Current_report.md"
+  },
+  {
+    "query": "What was Amcor's GAAP diluted EPS for the June 2023 quarter?",
+    "reference_answer": "12.3 cps",
+    "source": "3794e5536453_Amcor_FY23_-_Press_Release_FINAL.md"
+  },
+  {
+    "query": "What was the total cash returned to shareholders by Amcor in fiscal 2023?",
+    "reference_answer": "$1.2 billion",
+    "source": "3794e5536453_Amcor_FY23_-_Press_Release_FINAL.md"
+  },
+  {
+    "query": "What is the commission file number for JPMorgan Chase & Co.?",
+    "reference_answer": "1-5805",
+    "source": "bacf056ec1d1_corp-q2-2022.md"
+  },
+  {
+    "query": "As of June 30, 2022, how many shares of common stock were outstanding?",
+    "reference_answer": "2,932,572,390",
+    "source": "bacf056ec1d1_corp-q2-2022.md"
+  }
+]
