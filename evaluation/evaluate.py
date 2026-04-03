@@ -59,15 +59,10 @@ from rank_bm25 import BM25Okapi
 
 # RAGAS is optional — only imported when --ragas is passed
 try:
+    from openai import OpenAI as _OpenAIClient
     from ragas import EvaluationDataset, SingleTurnSample, evaluate as ragas_evaluate
-    from ragas.metrics.collections import (
-        AnswerRelevancy,
-        ContextPrecisionWithReference,
-        ContextRecall,
-        Faithfulness,
-    )
-    from ragas.llms import LangchainLLMWrapper
-    from ragas.embeddings import LangchainEmbeddingsWrapper
+    import ragas.metrics as _ragas_metrics
+    from ragas.llms import llm_factory as ragas_llm_factory
 
     RAGAS_AVAILABLE = True
 except ImportError:
@@ -415,9 +410,15 @@ def retrieve_hyde(
     return store.similarity_search_by_vector(hyp_emb, k=k)
 
 
+def _sanitize(text: str) -> str:
+    """Remove null bytes and ASCII control characters that break JSON serialisation."""
+    return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", " ", text).strip()
+
+
 def generate_answer(query: str, contexts: list[str], llm: ChatOpenAI) -> str:
     """Generate an answer grounded in the retrieved context chunks."""
-    context_block = "\n\n".join(f"[{i + 1}] {c}" for i, c in enumerate(contexts))
+    clean_contexts = [_sanitize(c)[:2000] for c in contexts]  # cap each chunk at 2000 chars
+    context_block = "\n\n".join(f"[{i + 1}] {c}" for i, c in enumerate(clean_contexts))
     prompt = (
         "Answer the following question using only the provided context. "
         "If the answer is not present in the context, respond with "
@@ -479,10 +480,10 @@ def average_metrics(all_metrics: list[dict[str, float]]) -> dict[str, float]:
 # ============================================================================
 
 _RAGAS_METRICS_DEF = [
-    ("ContextPrecisionWithReference", "context_precision"),
-    ("ContextRecall",                 "context_recall"),
-    ("Faithfulness",                  "faithfulness"),
-    ("AnswerRelevancy",               "answer_relevancy"),
+    ("context_precision", "context_precision"),
+    ("context_recall",    "context_recall"),
+    ("faithfulness",      "faithfulness"),
+    ("answer_relevancy",  "answer_relevancy"),
 ]
 
 RAGAS_METRIC_LABELS = [col for _, col in _RAGAS_METRICS_DEF]
@@ -504,23 +505,31 @@ def run_ragas_evaluation(
     """
     if not RAGAS_AVAILABLE:
         raise ImportError(
-            "ragas is not installed. Run:  poetry add ragas  or  pip install ragas"
+            "ragas is not installed. Run:  pip install ragas"
         )
 
-    metrics_instances = [
-        ContextPrecisionWithReference(),
-        ContextRecall(),
-        Faithfulness(),
-        AnswerRelevancy(),
+    openai_client = _OpenAIClient(api_key=os.environ["OPENAI_API_KEY"])
+    ragas_llm = ragas_llm_factory(LLM_MODEL, client=openai_client)
+
+    # Use singleton metric objects (old-style API that evaluate() accepts)
+    # LangChain embeddings needed for answer_relevancy's embed_query interface
+    metric_objs = [
+        _ragas_metrics.context_precision,
+        _ragas_metrics.context_recall,
+        _ragas_metrics.faithfulness,
+        _ragas_metrics.answer_relevancy,
     ]
+    for m in metric_objs:
+        if hasattr(m, "llm"):
+            m.llm = ragas_llm
+        if hasattr(m, "embeddings"):
+            m.embeddings = embeddings  # LangChain OpenAIEmbeddings has embed_query
 
     dataset = EvaluationDataset(samples=samples)
-    result = ragas_evaluate(
-        dataset=dataset,
-        metrics=metrics_instances,
-        llm=LangchainLLMWrapper(llm),
-        embeddings=LangchainEmbeddingsWrapper(embeddings),
-    )
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        result = ragas_evaluate(dataset=dataset, metrics=metric_objs)
 
     df = result.to_pandas()
     scores: dict[str, float] = {}
@@ -785,6 +794,78 @@ def save_results(results: dict[str, dict[str, float]], k: int) -> None:
 
 
 # ============================================================================
+# RAGAS-ONLY MODE
+# ============================================================================
+
+
+def run_ragas_only(
+    testset: list[dict],
+    pipelines: list[PipelineConfig],
+    k: int,
+    embeddings: OpenAIEmbeddings,
+    llm: ChatOpenAI,
+    prior_results: dict[str, dict[str, float]],
+) -> dict[str, dict[str, float]]:
+    """
+    Re-run retrieval (to get contexts) then score with RAGAS only.
+    Merges RAGAS scores into the prior retrieval results.
+    """
+    _, stores_by, bm25_by = build_indexes(pipelines, embeddings, llm, force_rebuild=False)
+
+    print(f"\n[RAGAS-ONLY] Scoring {len(pipelines)} pipelines × {len(testset)} queries")
+    print("-" * 60)
+
+    results = {name: dict(scores) for name, scores in prior_results.items()}
+
+    for pipeline in pipelines:
+        print(f"\n  {pipeline.name}")
+        ragas_samples: list = []
+
+        store = stores_by.get(pipeline.chunking)
+        bm25 = bm25_by.get(pipeline.chunking)
+
+        for qi, item in enumerate(testset):
+            query: str = item["query"]
+
+            if pipeline.retrieval == "traditional":
+                results_docs = retrieve_traditional(query, store, k)
+            elif pipeline.retrieval == "bm25":
+                results_docs = retrieve_bm25(query, bm25, k)
+            elif pipeline.retrieval == "hyde":
+                results_docs = retrieve_hyde(query, store, embeddings, llm, k)
+            else:
+                raise ValueError(f"Unknown retrieval method: {pipeline.retrieval}")
+
+            contexts = [r.page_content for r in results_docs]
+            answer = generate_answer(query, contexts, llm)
+            ragas_samples.append(SingleTurnSample(
+                user_input=query,
+                retrieved_contexts=contexts,
+                response=answer,
+                reference=item.get("reference_answer", ""),
+            ))
+
+            if (qi + 1) % 10 == 0:
+                print(f"    {qi + 1}/{len(testset)} queries", end="\r", flush=True)
+
+        print(f"\n    Running RAGAS on {len(ragas_samples)} samples...")
+        ragas_scores = run_ragas_evaluation(ragas_samples, llm, embeddings)
+
+        if pipeline.name not in results:
+            results[pipeline.name] = {}
+        results[pipeline.name].update(ragas_scores)
+
+        print(
+            f"    context_precision={ragas_scores.get('ragas_context_precision', 0):.3f}  "
+            f"context_recall={ragas_scores.get('ragas_context_recall', 0):.3f}  "
+            f"faithfulness={ragas_scores.get('ragas_faithfulness', 0):.3f}  "
+            f"answer_relevancy={ragas_scores.get('ragas_answer_relevancy', 0):.3f}"
+        )
+
+    return results
+
+
+# ============================================================================
 # MAIN
 # ============================================================================
 
@@ -816,16 +897,21 @@ def main() -> None:
         "--ragas", action="store_true",
         help=(
             "Also run RAGAS metrics (context_precision, context_recall, "
-            "faithfulness, response_relevancy). Requires ragas to be installed."
+            "faithfulness, answer_relevancy). Requires ragas to be installed."
+        ),
+    )
+    parser.add_argument(
+        "--ragas-only", action="store_true",
+        help=(
+            "Skip retrieval evaluation and only run RAGAS metrics on top of "
+            "the existing evaluation_results.json. Merges scores into that file."
         ),
     )
     args = parser.parse_args()
 
-    if args.ragas and not RAGAS_AVAILABLE:
+    if (args.ragas or args.ragas_only) and not RAGAS_AVAILABLE:
         print(
             "RAGAS is not installed. Install it with:\n"
-            "  poetry add ragas\n"
-            "  # or\n"
             "  pip install ragas"
         )
         return
@@ -860,10 +946,25 @@ def main() -> None:
     embeddings = OpenAIEmbeddings(model=EMBEDDING_MODEL)
     llm = ChatOpenAI(model=LLM_MODEL, temperature=0)
 
-    final_results = run_evaluation(
-        testset, pipelines, args.k, embeddings, llm, args.force_rebuild,
-        run_ragas=args.ragas,
-    )
+    if args.ragas_only:
+        # Load existing retrieval results and add RAGAS scores on top
+        existing_json = RESULTS_DIR / "evaluation_results.json"
+        if not existing_json.exists():
+            print(
+                f"No existing results found at '{existing_json}'.\n"
+                "Run without --ragas-only first to generate retrieval results."
+            )
+            return
+        existing = json.loads(existing_json.read_text(encoding="utf-8"))
+        k = existing.get("k", args.k)
+        prior_results: dict[str, dict[str, float]] = existing["results"]
+        final_results = run_ragas_only(testset, pipelines, k, embeddings, llm, prior_results)
+    else:
+        final_results = run_evaluation(
+            testset, pipelines, args.k, embeddings, llm, args.force_rebuild,
+            run_ragas=args.ragas,
+        )
+
     print_results_table(final_results, args.k)
     save_results(final_results, args.k)
 
