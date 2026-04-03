@@ -1,0 +1,10 @@
+chunking,method,label,rows,avg_judge_correctness,avg_judge_groundedness,avg_judge_relevance,avg_judge_pass,avg_latency_seconds
+fixed,agentic-rag,fixed+agentic-rag,50,0.28,0.44,0.64,0.22,15.5318
+agentic,agentic-rag,agentic+agentic-rag,50,0.18,0.44,0.56,0.16,15.9763
+semantic,agentic-rag,semantic+agentic-rag,50,0.24,0.36,0.66,0.16,14.6883
+fixed,traditional-rag,fixed+traditional-rag,50,0.12,0.36,0.2,0.12,8.9378
+semantic,traditional-rag,semantic+traditional-rag,50,0.16,0.38,0.26,0.12,9.2174
+agentic,traditional-rag,agentic+traditional-rag,50,0.14,0.3,0.3,0.06,9.7383
+semantic,bm25,semantic+bm25,50,0.08,0.26,0.1,0.06,8.9375
+fixed,bm25,fixed+bm25,50,0.06,0.2,0.06,0.04,8.176
+agentic,bm25,agentic+bm25,50,0.04,0.1,0.04,0.02,8.2734

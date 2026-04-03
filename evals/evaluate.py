@@ -85,19 +85,20 @@ EMBEDDING_MODEL = "text-embedding-3-small"
 LLM_MODEL = "gpt-4o-mini"
 DEFAULT_K = 5
 
-# Chunking parameters (match existing pipeline defaults)
+# Chunking parameters
 FIXED_CHUNK_SIZE = 1000
 FIXED_CHUNK_OVERLAP = 200
 
-SEMANTIC_PERCENTILE = 30.0
-SEMANTIC_MAX_SENTENCES = 5
-SEMANTIC_OVERLAP = 1
+SEMANTIC_PERCENTILE = 70.0
+SEMANTIC_MAX_SENTENCES = 8
+SEMANTIC_OVERLAP = 2
 
 AGENTIC_MIN_SENTENCES = 2
 AGENTIC_MAX_SENTENCES = 6
 AGENTIC_OVERLAP = 1
-AGENTIC_WINDOW = 40        # sentences per LLM planning window
-AGENTIC_WINDOW_OVERLAP = 5
+AGENTIC_WINDOW = 80        # sentences per LLM planning window
+AGENTIC_WINDOW_OVERLAP = 10
+AGENTIC_MAX_SENTENCE_CHARS = 500
 
 
 # ============================================================================
@@ -244,7 +245,7 @@ def chunk_agentic(docs: list[Document], llm: ChatOpenAI) -> list[Document]:
         for start in range(0, len(sents), step):
             window = sents[start : start + AGENTIC_WINDOW]
             numbered = "\n".join(
-                f"{i}: {s[:250]}" for i, s in enumerate(window)
+                f"{i}: {s[:AGENTIC_MAX_SENTENCE_CHARS]}" for i, s in enumerate(window)
             )
             prompt = (
                 f"You are chunking a financial document. Identify sentence indices where a "

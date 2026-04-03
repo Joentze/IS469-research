@@ -211,5 +211,5 @@ database_agentic/
 
 bm25_agentic
 # Evaluation cache and vector database (large files)
-evaluation/cache/
-evaluation/database/
+evals/cache/
+evals/database/
