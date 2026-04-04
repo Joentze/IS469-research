@@ -213,3 +213,5 @@ bm25_agentic
 # Evaluation cache and vector database (large files)
 evals/cache/
 evals/database/
+
+.DS_Store
