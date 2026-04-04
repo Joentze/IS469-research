@@ -6,7 +6,7 @@ This demonstrates:
 - Multiple indexes (BM25 sparse + Chroma dense)
 - Hybrid retrieval combining results from both indexes
 """
-
+from rich import print
 from pathlib import Path
 
 from chunkers.semantic import SemanticChunker
@@ -46,7 +46,7 @@ def main():
     bm25_index = BM25Index()
     chroma_index = ChromaIndex(
         collection_name="example_semantic_chunks",
-        persist_directory="../database/example_semantic",
+        persist_directory=f"{project_root}/database/example_semantic",
         force_rebuild=False,
     )
 
@@ -91,7 +91,18 @@ def main():
     print("=" * 60)
     print(f"Query: {result['query']}")
     print(f"\nRetrieved {len(result['retrieved_docs'])} documents")
-    print(f"\nAnswer:\n{result['answer']}")
+    
+    # Print retrieved documents
+    print("\n" + "-" * 60)
+    print("Retrieved Documents:")
+    print("-" * 60)
+    for i, doc in enumerate(result['retrieved_docs'], 1):
+        print(f"\n[{i}] {doc.page_content}")
+        if doc.metadata:
+            print(f"    Metadata: {doc.metadata}")
+    
+    print("\n" + "=" * 60)
+    print(f"Answer:\n{result['answer']}")
 
 
 if __name__ == "__main__":
