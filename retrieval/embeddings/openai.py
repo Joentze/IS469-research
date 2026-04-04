@@ -1,12 +1,12 @@
 """OpenAI embedding wrapper implementing the Embedder interface."""
 
-from typing import List
+from typing import Dict, List
 
-from langchain.embeddings import Embeddings
+from core.interfaces import MetadataAwareEmbedder
 from langchain_openai import OpenAIEmbeddings
 
 
-class OpenAIEmbedder(Embeddings):
+class OpenAIEmbedder(MetadataAwareEmbedder):
     """Wrapper around LangChain's OpenAIEmbeddings."""
 
     def __init__(self, model: str = "text-embedding-3-small"):
@@ -19,7 +19,7 @@ class OpenAIEmbedder(Embeddings):
         self.model = model
         self._embedder = OpenAIEmbeddings(model=model)
 
-    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+    def embed_documents(self, texts: List[str], metadatas: List[Dict] | None = None) -> List[List[float]]:
         """Embed a list of document texts."""
         return self._embedder.embed_documents(texts)
 

@@ -1,10 +1,25 @@
 """Abstract base classes defining the RAG pipeline strategy interfaces."""
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from langchain.embeddings import Embeddings
 from langchain_core.documents import Document
+
+
+class MetadataAwareEmbedder(Embeddings):
+    """Embedder that can access both document text and metadata."""
+
+    @abstractmethod
+    def embed_documents(self, texts: list[str], metadatas: list[dict] | None = None) -> list[list[float]]:
+        """Embed documents page_content, potentially using metadata context."""
+        pass
+
+
+    @abstractmethod
+    def embed_query(self, text: str) -> List[float]:
+        """Embed a query (without metadata context)."""
+        pass
 
 
 class Chunker(ABC):
