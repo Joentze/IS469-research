@@ -66,6 +66,7 @@ OVERLAP_SENTENCES = 1
 CHUNK_PLANNING_WINDOW_SENTENCES = 80
 CHUNK_PLANNING_WINDOW_OVERLAP = 10
 CHUNK_PLANNING_MAX_SENTENCE_CHARS = 500
+TOP_K = 5
 
 
 # ============================================================================
@@ -354,7 +355,7 @@ def create_agent_tools(vector_store: Chroma) -> list:
 	"""Create retrieval tools used by the answering ReAct agent."""
 
 	@tool
-	def search_knowledge_base(query: str, k: int = 4) -> str:
+	def search_knowledge_base(query: str, k: int = TOP_K) -> str:
 		"""Search the agentic chunk index and return top matching chunks."""
 		results = vector_store.similarity_search_with_score(query, k=k)
 		if not results:

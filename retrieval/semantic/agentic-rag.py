@@ -60,9 +60,10 @@ DEFAULT_TEXTS_DIR = PROJECT_ROOT / "texts"
 TEXTS_DIR = os.getenv("TEXTS_DIR", str(DEFAULT_TEXTS_DIR))
 FORCE_REINDEX = os.getenv("FORCE_REINDEX", "false").lower() == "true"
 
-MAX_SENTENCES_PER_CHUNK = 8
-OVERLAP_SENTENCES = 2
-BREAKPOINT_PERCENTILE = 70.0
+MAX_SENTENCES_PER_CHUNK = 6
+OVERLAP_SENTENCES = 1
+BREAKPOINT_PERCENTILE = 30.0
+TOP_K = 5
 
 
 # ============================================================================
@@ -258,12 +259,21 @@ def initialize_vector_store(documents: list[Document], embeddings: OpenAIEmbeddi
 def create_agent_tools(vector_store: Chroma) -> list:
     """Create retrieval tools used by the ReAct agent."""
 
+<<<<<<< Updated upstream
     @tool
     def search_knowledge_base(query: str, k: int = 4) -> str:
         """Search the semantic chunk index and return the top matching chunks."""
         results = vector_store.similarity_search_with_score(query, k=k)
         if not results:
             return "No relevant chunks found."
+=======
+	@tool
+	def search_knowledge_base(query: str, k: int = int TOP_K) -> str:
+		"""Search the semantic chunk index and return the top matching chunks."""
+		results = vector_store.similarity_search_with_score(query, k=k)
+		if not results:
+			return "No relevant chunks found."
+>>>>>>> Stashed changes
 
         lines = ["Top semantic chunks:"]
         for i, (doc, score) in enumerate(results, start=1):
