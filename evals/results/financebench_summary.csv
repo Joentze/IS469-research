@@ -8,3 +8,4 @@ agentic,traditional-rag,agentic+traditional-rag,50,0.14,0.3,0.3,0.06,9.7383
 semantic,bm25,semantic+bm25,50,0.08,0.26,0.1,0.06,8.9375
 fixed,bm25,fixed+bm25,50,0.06,0.2,0.06,0.04,8.176
 agentic,bm25,agentic+bm25,50,0.04,0.1,0.04,0.02,8.2734
+orchestrator,multi-agent,orchestrator+multi-agent,50,0.0,0.0,0.0,0.0,0.0

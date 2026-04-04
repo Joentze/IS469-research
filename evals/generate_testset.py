@@ -93,12 +93,14 @@ def generate_questions(client: OpenAI, doc_text: str, filename: str, n: int) -> 
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate RAG evaluation test set")
+    parser = argparse.ArgumentParser(
+        description="Generate RAG evaluation test set")
     parser.add_argument("--n-docs", type=int, default=DEFAULT_N_DOCS,
                         help="Number of documents to sample")
     parser.add_argument("--questions-per-doc", type=int, default=DEFAULT_QUESTIONS_PER_DOC,
                         help="Questions to generate per document")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed for sampling")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Random seed for sampling")
     args = parser.parse_args()
 
     load_env()
@@ -117,7 +119,8 @@ def main() -> None:
 
     testset: list[dict] = []
     for i, filepath in enumerate(sampled):
-        print(f"[{i + 1}/{len(sampled)}] {filepath.name}", end=" ... ", flush=True)
+        print(f"[{i + 1}/{len(sampled)}] {filepath.name}",
+              end=" ... ", flush=True)
         content = filepath.read_text(encoding="utf-8", errors="ignore").strip()
 
         if len(content) < 200:
@@ -125,7 +128,8 @@ def main() -> None:
             continue
 
         try:
-            qas = generate_questions(client, content, filepath.name, args.questions_per_doc)
+            qas = generate_questions(
+                client, content, filepath.name, args.questions_per_doc)
             for qa in qas:
                 testset.append({
                     "query": qa["question"],
