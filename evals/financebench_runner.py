@@ -51,6 +51,13 @@ DEFAULT_DATASET = "PatronusAI/financebench"
 DEFAULT_SPLIT = "train"
 DEFAULT_OUTPUT_PREFIX = "financebench"
 
+# Add case-insensitive substrings here to exclude FinanceBench rows whose
+# `doc_name` or evidence document names match files you do not have locally.
+EXCLUDED_ROW_STRINGS: list[str] = [
+    # "apple",
+    # "2023_q4",
+]
+
 CHUNKINGS = ("fixed", "semantic", "agentic")
 METHODS = ("bm25", "traditional-rag", "agentic-rag")
 
@@ -188,6 +195,20 @@ def find_local_source_matches(doc_name: str, catalog: list[dict[str, Any]]) -> l
     return sorted(set(matches))
 
 
+def row_matches_exclusion(doc_name: str, evidence_doc_names: list[str]) -> bool:
+    excluded = [item.strip().lower()
+                for item in EXCLUDED_ROW_STRINGS if item.strip()]
+    if not excluded:
+        return False
+
+    haystacks = [doc_name, *evidence_doc_names]
+    for value in haystacks:
+        lowered = value.lower()
+        if any(excluded_text in lowered for excluded_text in excluded):
+            return True
+    return False
+
+
 def load_financebench_rows(
     dataset_name: str,
     split: str,
@@ -211,13 +232,16 @@ def load_financebench_rows(
         evidence = row.get("evidence") or []
         evidence_doc_names = sorted(
             {
-                str(item.get("doc_name") or item.get("evidence_doc_name") or "").strip()
+                str(item.get("doc_name") or item.get(
+                    "evidence_doc_name") or "").strip()
                 for item in evidence
                 if str(item.get("doc_name") or item.get("evidence_doc_name") or "").strip()
             }
         )
 
         doc_name = str(row.get("doc_name") or "").strip()
+        if row_matches_exclusion(doc_name, evidence_doc_names):
+            continue
         local_matches = find_local_source_matches(doc_name, catalog)
 
         usable_rows.append(
@@ -256,7 +280,8 @@ def save_sample(rows: list[dict[str, Any]], prefix: str) -> Path:
         "sample_size": len(rows),
         "rows": rows,
     }
-    sample_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    sample_path.write_text(json.dumps(
+        payload, indent=2, ensure_ascii=False), encoding="utf-8")
     return sample_path
 
 
@@ -328,7 +353,8 @@ def run_bm25_method(
     resources: ResourceBundle,
     k: int,
 ) -> dict[str, Any]:
-    documents = retrieval_eval.retrieve_bm25(query, resources.bm25_by[chunking], k)
+    documents = retrieval_eval.retrieve_bm25(
+        query, resources.bm25_by[chunking], k)
     contexts = [doc.page_content for doc in documents]
     llm = ChatOpenAI(model=retrieval_eval.LLM_MODEL, temperature=0)
     answer = retrieval_eval.generate_answer(query, contexts, llm)
@@ -345,7 +371,8 @@ def run_traditional_method(
     resources: ResourceBundle,
     k: int,
 ) -> dict[str, Any]:
-    documents = retrieval_eval.retrieve_traditional(query, resources.stores_by[chunking], k)
+    documents = retrieval_eval.retrieve_traditional(
+        query, resources.stores_by[chunking], k)
     contexts = [doc.page_content for doc in documents]
     llm = ChatOpenAI(model=retrieval_eval.LLM_MODEL, temperature=0)
     answer = retrieval_eval.generate_answer(query, contexts, llm)
@@ -375,7 +402,8 @@ def build_agent_tools(
     @tool
     def search_knowledge_base(search_query: str, top_k: int = k) -> str:
         """Search the shared Chroma collection for relevant financial evidence."""
-        results = vector_store.similarity_search_with_score(search_query, k=top_k)
+        results = vector_store.similarity_search_with_score(
+            search_query, k=top_k)
         if not results:
             return "No relevant chunks found."
 
@@ -516,7 +544,8 @@ def run_all_jobs(
     max_workers: int,
 ) -> list[dict[str, Any]]:
     judge_fn = judge_utils.build_judge(judge_model)
-    jobs = [JobSpec(chunking=chunking, method=method) for chunking in CHUNKINGS for method in METHODS]
+    jobs = [JobSpec(chunking=chunking, method=method)
+            for chunking in CHUNKINGS for method in METHODS]
 
     results: list[dict[str, Any]] = []
     future_map: dict[Any, tuple[dict[str, Any], JobSpec]] = {}
@@ -526,7 +555,8 @@ def run_all_jobs(
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         for row in rows:
             for job in jobs:
-                future = executor.submit(run_single_job, row, job, resources, judge_fn, k)
+                future = executor.submit(
+                    run_single_job, row, job, resources, judge_fn, k)
                 future_map[future] = (row, job)
         for future in as_completed(future_map):
             row, job = future_map[future]
@@ -672,7 +702,8 @@ def save_results(
 
 
 def print_mapping_summary(rows: list[dict[str, Any]]) -> None:
-    confident = sum(1 for row in rows if row["has_confident_local_source_match"])
+    confident = sum(
+        1 for row in rows if row["has_confident_local_source_match"])
     ambiguous = sum(1 for row in rows if len(row["local_source_matches"]) > 1)
     unmatched = len(rows) - confident - ambiguous
     print(

@@ -48,7 +48,9 @@ import json
 import math
 import os
 import re
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import NamedTuple
 
@@ -100,6 +102,8 @@ AGENTIC_WINDOW = 80        # sentences per LLM planning window
 AGENTIC_WINDOW_OVERLAP = 10
 AGENTIC_MAX_SENTENCE_CHARS = 500
 
+CHUNKING_MAX_WORKERS = 8
+
 
 # ============================================================================
 # ENVIRONMENT
@@ -133,7 +137,9 @@ def load_documents() -> list[Document]:
     for fp in sorted(TEXTS_DIR.glob("*.md")):
         content = fp.read_text(encoding="utf-8", errors="ignore").strip()
         if content:
-            docs.append(Document(page_content=content, metadata={"source": fp.name}))
+            print(f"    Loading: {fp.name}")
+            docs.append(Document(page_content=content,
+                        metadata={"source": fp.name}))
     if not docs:
         raise ValueError(f"No .md files found in {TEXTS_DIR}")
     return docs
@@ -175,15 +181,17 @@ def chunk_fixed(docs: list[Document]) -> list[Document]:
     """Character sliding window — no API calls required."""
     chunks: list[Document] = []
     step = FIXED_CHUNK_SIZE - FIXED_CHUNK_OVERLAP
-    for doc in docs:
+    for doc_num, doc in enumerate(docs):
+        print(f"    [{doc_num + 1}/{len(docs)}] Chunking: {doc.metadata.get('source', '?')}")
         text = doc.page_content
         idx = 0
         for start in range(0, len(text), step):
-            chunk = text[start : start + FIXED_CHUNK_SIZE].strip()
+            chunk = text[start: start + FIXED_CHUNK_SIZE].strip()
             if chunk:
                 chunks.append(Document(
                     page_content=chunk,
-                    metadata={**doc.metadata, "chunk_index": idx, "chunk_method": "fixed"},
+                    metadata={**doc.metadata, "chunk_index": idx,
+                              "chunk_method": "fixed"},
                 ))
                 idx += 1
             if start + FIXED_CHUNK_SIZE >= len(text):
@@ -191,104 +199,153 @@ def chunk_fixed(docs: list[Document]) -> list[Document]:
     return chunks
 
 
-def chunk_semantic(docs: list[Document], embeddings: OpenAIEmbeddings) -> list[Document]:
-    """Sentence embedding similarity — requires embedding API calls."""
-    chunked: list[Document] = []
-    for doc in docs:
-        sents = split_sentences(doc.page_content)
-        if len(sents) <= 1:
-            chunked.append(Document(
-                page_content=doc.page_content,
-                metadata={**doc.metadata, "chunk_index": 0, "chunk_method": "semantic"},
-            ))
-            continue
+def _chunk_semantic_single(doc: Document, embeddings: OpenAIEmbeddings) -> list[Document]:
+    """Chunk a single document using sentence-embedding similarity."""
+    sents = split_sentences(doc.page_content)
+    if len(sents) <= 1:
+        return [Document(
+            page_content=doc.page_content,
+            metadata={**doc.metadata, "chunk_index": 0, "chunk_method": "semantic"},
+        )]
 
-        vecs = embeddings.embed_documents(sents)
-        sims = [cosine_sim(vecs[i], vecs[i + 1]) for i in range(len(vecs) - 1)]
-        threshold = percentile_val(sims, SEMANTIC_PERCENTILE)
-        breaks = {i for i, s in enumerate(sims) if s <= threshold}
+    vecs = embeddings.embed_documents(sents)
+    sims = [cosine_sim(vecs[i], vecs[i + 1]) for i in range(len(vecs) - 1)]
+    threshold = percentile_val(sims, SEMANTIC_PERCENTILE)
+    breaks = {i for i, s in enumerate(sims) if s <= threshold}
 
-        current: list[str] = []
-        chunk_idx = 0
-        for i, sent in enumerate(sents):
-            current.append(sent)
-            if (i in breaks and len(current) >= 2) or len(current) >= SEMANTIC_MAX_SENTENCES:
-                chunked.append(Document(
-                    page_content=" ".join(current).strip(),
-                    metadata={**doc.metadata, "chunk_index": chunk_idx, "chunk_method": "semantic"},
-                ))
-                chunk_idx += 1
-                current = current[-SEMANTIC_OVERLAP:] if SEMANTIC_OVERLAP > 0 else []
-        if current:
-            chunked.append(Document(
+    result: list[Document] = []
+    current: list[str] = []
+    chunk_idx = 0
+    for i, sent in enumerate(sents):
+        current.append(sent)
+        if (i in breaks and len(current) >= 2) or len(current) >= SEMANTIC_MAX_SENTENCES:
+            result.append(Document(
                 page_content=" ".join(current).strip(),
-                metadata={**doc.metadata, "chunk_index": chunk_idx, "chunk_method": "semantic"},
+                metadata={**doc.metadata, "chunk_index": chunk_idx,
+                          "chunk_method": "semantic"},
             ))
-    return chunked
+            chunk_idx += 1
+            current = current[-SEMANTIC_OVERLAP:] if SEMANTIC_OVERLAP > 0 else []
+    if current:
+        result.append(Document(
+            page_content=" ".join(current).strip(),
+            metadata={**doc.metadata, "chunk_index": chunk_idx,
+                      "chunk_method": "semantic"},
+        ))
+    return result
+
+
+def chunk_semantic(docs: list[Document], embeddings: OpenAIEmbeddings) -> list[Document]:
+    """Sentence embedding similarity — parallelised across documents."""
+    completed = 0
+    total = len(docs)
+    lock = threading.Lock()
+
+    ordered_results: list[list[Document]] = [[] for _ in range(total)]
+
+    def _process(idx: int, doc: Document) -> None:
+        nonlocal completed
+        chunks = _chunk_semantic_single(doc, embeddings)
+        ordered_results[idx] = chunks
+        with lock:
+            completed += 1
+            print(f"    [{completed}/{total}] Chunked: {doc.metadata.get('source', '?')} ({len(chunks)} chunks)")
+
+    with ThreadPoolExecutor(max_workers=CHUNKING_MAX_WORKERS) as executor:
+        futures = {
+            executor.submit(_process, i, doc): i
+            for i, doc in enumerate(docs)
+        }
+        for future in as_completed(futures):
+            future.result()
+
+    return [chunk for doc_chunks in ordered_results for chunk in doc_chunks]
+
+
+def _chunk_agentic_single(doc: Document, llm: ChatOpenAI) -> list[Document]:
+    """Chunk a single document using LLM-proposed topic boundaries."""
+    step = AGENTIC_WINDOW - AGENTIC_WINDOW_OVERLAP
+    sents = split_sentences(doc.page_content)
+    if len(sents) <= 2:
+        return [Document(
+            page_content=doc.page_content,
+            metadata={**doc.metadata, "chunk_index": 0, "chunk_method": "agentic"},
+        )]
+
+    break_indices: set[int] = set()
+    for start in range(0, len(sents), step):
+        window = sents[start: start + AGENTIC_WINDOW]
+        numbered = "\n".join(
+            f"{i}: {s[:AGENTIC_MAX_SENTENCE_CHARS]}" for i, s in enumerate(window)
+        )
+        prompt = (
+            f"You are chunking a financial document. Identify sentence indices where a "
+            f"chunk break should occur so each chunk is {AGENTIC_MIN_SENTENCES}–"
+            f"{AGENTIC_MAX_SENTENCES} sentences and covers one coherent topic.\n\n"
+            f"Sentences:\n{numbered}\n\n"
+            f'Respond with JSON only: {{"break_after": [list of 0-based indices]}}'
+        )
+        try:
+            resp = llm.invoke(prompt)
+            content = str(getattr(resp, "content", "")).strip()
+            if "```" in content:
+                content = content.split("```")[1]
+                if content.startswith("json"):
+                    content = content[4:]
+            data = json.loads(content.strip())
+            for idx in data.get("break_after", []):
+                if isinstance(idx, int) and 0 <= idx < len(window):
+                    break_indices.add(start + idx)
+        except Exception:
+            pass
+
+    result: list[Document] = []
+    current: list[str] = []
+    chunk_idx = 0
+    for i, sent in enumerate(sents):
+        current.append(sent)
+        if (i in break_indices and len(current) >= AGENTIC_MIN_SENTENCES) or len(current) >= AGENTIC_MAX_SENTENCES:
+            result.append(Document(
+                page_content=" ".join(current).strip(),
+                metadata={**doc.metadata, "chunk_index": chunk_idx,
+                          "chunk_method": "agentic"},
+            ))
+            chunk_idx += 1
+            current = current[-AGENTIC_OVERLAP:] if AGENTIC_OVERLAP > 0 else []
+    if current:
+        result.append(Document(
+            page_content=" ".join(current).strip(),
+            metadata={**doc.metadata, "chunk_index": chunk_idx,
+                      "chunk_method": "agentic"},
+        ))
+    return result
 
 
 def chunk_agentic(docs: list[Document], llm: ChatOpenAI) -> list[Document]:
-    """LLM-proposed topic boundaries — requires one LLM call per sentence window."""
-    chunked: list[Document] = []
-    step = AGENTIC_WINDOW - AGENTIC_WINDOW_OVERLAP
+    """LLM-proposed topic boundaries — parallelised across documents."""
+    completed = 0
+    total = len(docs)
+    lock = threading.Lock()
 
-    for doc_num, doc in enumerate(docs):
-        sents = split_sentences(doc.page_content)
-        if len(sents) <= 2:
-            chunked.append(Document(
-                page_content=doc.page_content,
-                metadata={**doc.metadata, "chunk_index": 0, "chunk_method": "agentic"},
-            ))
-            continue
+    ordered_results: list[list[Document]] = [[] for _ in range(total)]
 
-        break_indices: set[int] = set()
-        for start in range(0, len(sents), step):
-            window = sents[start : start + AGENTIC_WINDOW]
-            numbered = "\n".join(
-                f"{i}: {s[:AGENTIC_MAX_SENTENCE_CHARS]}" for i, s in enumerate(window)
-            )
-            prompt = (
-                f"You are chunking a financial document. Identify sentence indices where a "
-                f"chunk break should occur so each chunk is {AGENTIC_MIN_SENTENCES}–"
-                f"{AGENTIC_MAX_SENTENCES} sentences and covers one coherent topic.\n\n"
-                f"Sentences:\n{numbered}\n\n"
-                f'Respond with JSON only: {{"break_after": [list of 0-based indices]}}'
-            )
-            try:
-                resp = llm.invoke(prompt)
-                content = str(getattr(resp, "content", "")).strip()
-                if "```" in content:
-                    content = content.split("```")[1]
-                    if content.startswith("json"):
-                        content = content[4:]
-                data = json.loads(content.strip())
-                for idx in data.get("break_after", []):
-                    if isinstance(idx, int) and 0 <= idx < len(window):
-                        break_indices.add(start + idx)
-            except Exception:
-                pass
+    def _process(idx: int, doc: Document) -> None:
+        nonlocal completed
+        chunks = _chunk_agentic_single(doc, llm)
+        ordered_results[idx] = chunks
+        with lock:
+            completed += 1
+            print(f"    [{completed}/{total}] Chunked: {doc.metadata.get('source', '?')} ({len(chunks)} chunks)")
 
-        current: list[str] = []
-        chunk_idx = 0
-        for i, sent in enumerate(sents):
-            current.append(sent)
-            if (i in break_indices and len(current) >= AGENTIC_MIN_SENTENCES) or len(current) >= AGENTIC_MAX_SENTENCES:
-                chunked.append(Document(
-                    page_content=" ".join(current).strip(),
-                    metadata={**doc.metadata, "chunk_index": chunk_idx, "chunk_method": "agentic"},
-                ))
-                chunk_idx += 1
-                current = current[-AGENTIC_OVERLAP:] if AGENTIC_OVERLAP > 0 else []
-        if current:
-            chunked.append(Document(
-                page_content=" ".join(current).strip(),
-                metadata={**doc.metadata, "chunk_index": chunk_idx, "chunk_method": "agentic"},
-            ))
+    with ThreadPoolExecutor(max_workers=CHUNKING_MAX_WORKERS) as executor:
+        futures = {
+            executor.submit(_process, i, doc): i
+            for i, doc in enumerate(docs)
+        }
+        for future in as_completed(futures):
+            future.result()
 
-        if (doc_num + 1) % 5 == 0:
-            print(f"    Agentic chunking: {doc_num + 1}/{len(docs)} docs done")
-
-    return chunked
+    return [chunk for doc_chunks in ordered_results for chunk in doc_chunks]
 
 
 # ============================================================================
@@ -309,7 +366,8 @@ def _chunks_from_json(raw: str) -> list[Document]:
 
 def save_chunk_cache(chunks: list[Document], name: str) -> None:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    (CACHE_DIR / f"{name}.json").write_text(_chunks_to_json(chunks), encoding="utf-8")
+    (CACHE_DIR /
+     f"{name}.json").write_text(_chunks_to_json(chunks), encoding="utf-8")
 
 
 def load_chunk_cache(name: str) -> list[Document] | None:
@@ -339,7 +397,8 @@ def build_or_load_vector_store(
     existing = store._collection.count()
 
     if existing > 0 and not force_rebuild:
-        print(f"    Reusing '{collection_name}' ({existing} chunks already indexed)")
+        print(
+            f"    Reusing '{collection_name}' ({existing} chunks already indexed)")
         return store
 
     if force_rebuild and existing > 0:
@@ -351,9 +410,15 @@ def build_or_load_vector_store(
             persist_directory=str(DB_DIR),
         )
 
-    print(f"    Indexing {len(chunks)} chunks into '{collection_name}'...")
-    for start in range(0, len(chunks), 5000):
-        store.add_documents(chunks[start : start + 5000])
+    total = len(chunks)
+    batch_size = 5000
+    print(f"    Indexing {total} chunks into '{collection_name}'...")
+    for start in range(0, total, batch_size):
+        batch = chunks[start: start + batch_size]
+        sources_in_batch = sorted({c.metadata.get("source", "?") for c in batch})
+        print(f"    Batch {start // batch_size + 1}: chunks {start+1}-{min(start+batch_size, total)} "
+              f"({len(sources_in_batch)} files: {', '.join(sources_in_batch[:5])}{'...' if len(sources_in_batch) > 5 else ''})")
+        store.add_documents(batch)
     print(f"    Done: {store._collection.count()} chunks indexed")
     return store
 
@@ -370,13 +435,15 @@ class BM25Index:
 
     def __init__(self, chunks: list[Document]) -> None:
         self.chunks = chunks
-        corpus = [self._TOKENIZE.findall(c.page_content.lower()) for c in chunks]
+        corpus = [self._TOKENIZE.findall(
+            c.page_content.lower()) for c in chunks]
         self.bm25 = BM25Okapi(corpus)
 
     def retrieve(self, query: str, k: int) -> list[Document]:
         tokens = self._TOKENIZE.findall(query.lower())
         scores = self.bm25.get_scores(tokens)
-        top_idx = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:k]
+        top_idx = sorted(range(len(scores)),
+                         key=lambda i: scores[i], reverse=True)[:k]
         return [self.chunks[i] for i in top_idx]
 
 
@@ -418,8 +485,10 @@ def _sanitize(text: str) -> str:
 
 def generate_answer(query: str, contexts: list[str], llm: ChatOpenAI) -> str:
     """Generate an answer grounded in the retrieved context chunks."""
-    clean_contexts = [_sanitize(c)[:2000] for c in contexts]  # cap each chunk at 2000 chars
-    context_block = "\n\n".join(f"[{i + 1}] {c}" for i, c in enumerate(clean_contexts))
+    clean_contexts = [_sanitize(c)[:2000]
+                      for c in contexts]  # cap each chunk at 2000 chars
+    context_block = "\n\n".join(
+        f"[{i + 1}] {c}" for i, c in enumerate(clean_contexts))
     prompt = (
         "Answer the following question using only the provided context. "
         "If the answer is not present in the context, respond with "
@@ -491,7 +560,8 @@ RAGAS_METRIC_LABELS = [col for _, col in _RAGAS_METRICS_DEF]
 
 
 def run_ragas_evaluation(
-    samples: list,          # list[SingleTurnSample] — typed loosely to avoid NameError when RAGAS is absent
+    # list[SingleTurnSample] — typed loosely to avoid NameError when RAGAS is absent
+    samples: list,
     llm: ChatOpenAI,
     embeddings: OpenAIEmbeddings,
 ) -> dict[str, float]:
@@ -577,7 +647,8 @@ def build_indexes(
 ) -> tuple[dict[str, list[Document]], dict[str, Chroma], dict[str, BM25Index]]:
     """Build (or load) all chunk lists, vector stores, and BM25 indexes needed."""
     strategies = {p.chunking for p in pipelines}
-    needs_vector = {p.chunking for p in pipelines if p.retrieval in ("traditional", "hyde")}
+    needs_vector = {p.chunking for p in pipelines if p.retrieval in (
+        "traditional", "hyde")}
     needs_bm25 = {p.chunking for p in pipelines if p.retrieval == "bm25"}
 
     print("\n[1] Loading source documents...")
@@ -605,13 +676,15 @@ def build_indexes(
                 print("    Embedding sentences for semantic chunking...")
                 chunks = chunk_semantic(docs, embeddings)
             elif strategy == "agentic":
-                print("    Running LLM-based agentic chunking (slow, cached after first run)...")
+                print(
+                    "    Running LLM-based agentic chunking (slow, cached after first run)...")
                 chunks = chunk_agentic(docs, llm)
             else:
                 raise ValueError(f"Unknown chunking strategy: {strategy}")
             elapsed = time.time() - t0
             save_chunk_cache(chunks, cache_name)
-            print(f"    Created {len(chunks)} chunks in {elapsed:.1f}s  (cached to evaluation/cache/)")
+            print(
+                f"    Created {len(chunks)} chunks in {elapsed:.1f}s  (cached to evaluation/cache/)")
 
         chunks_by[strategy] = chunks
 
@@ -641,10 +714,12 @@ def run_evaluation(
     run_ragas: bool = False,
 ) -> dict[str, dict[str, float]]:
 
-    _, stores_by, bm25_by = build_indexes(pipelines, embeddings, llm, force_rebuild)
+    _, stores_by, bm25_by = build_indexes(
+        pipelines, embeddings, llm, force_rebuild)
 
     ragas_label = " + RAGAS" if run_ragas else ""
-    print(f"\n[3] Evaluating {len(pipelines)} pipelines × {len(testset)} queries (k={k}{ragas_label})")
+    print(
+        f"\n[3] Evaluating {len(pipelines)} pipelines × {len(testset)} queries (k={k}{ragas_label})")
     print("-" * 60)
 
     results: dict[str, dict[str, float]] = {}
@@ -668,10 +743,13 @@ def run_evaluation(
             elif pipeline.retrieval == "hyde":
                 results_docs = retrieve_hyde(query, store, embeddings, llm, k)
             else:
-                raise ValueError(f"Unknown retrieval method: {pipeline.retrieval}")
+                raise ValueError(
+                    f"Unknown retrieval method: {pipeline.retrieval}")
 
-            retrieved_sources = [r.metadata.get("source", "") for r in results_docs]
-            per_query.append(compute_metrics(retrieved_sources, relevant_source, k))
+            retrieved_sources = [r.metadata.get(
+                "source", "") for r in results_docs]
+            per_query.append(compute_metrics(
+                retrieved_sources, relevant_source, k))
 
             if run_ragas:
                 contexts = [r.page_content for r in results_docs]
@@ -684,7 +762,8 @@ def run_evaluation(
                 ))
 
             if (qi + 1) % 10 == 0:
-                print(f"    {qi + 1}/{len(testset)} queries", end="\r", flush=True)
+                print(f"    {qi + 1}/{len(testset)} queries",
+                      end="\r", flush=True)
 
         avg = average_metrics(per_query)
 
@@ -733,7 +812,8 @@ def _print_section(
     print(f"\n{sep}")
     print(title)
     print(sep)
-    print(f"{'Pipeline':<{name_w}}" + "".join(f"{lbl:>{col_w}}" for lbl in header_labels))
+    print(f"{'Pipeline':<{name_w}}" +
+          "".join(f"{lbl:>{col_w}}" for lbl in header_labels))
     print("-" * total_w)
 
     for name, scores in sorted(results.items(), key=lambda x: -x[1].get(sort_key, 0)):
@@ -755,7 +835,8 @@ def print_results_table(results: dict[str, dict[str, float]], k: int) -> None:
         title=f"RETRIEVAL METRICS  (k={k},  {len(results)} pipelines)",
         results=results,
         metric_keys=RETRIEVAL_METRIC_LABELS,
-        header_labels=[m.replace("@k", f"@{k}") for m in RETRIEVAL_METRIC_LABELS],
+        header_labels=[m.replace("@k", f"@{k}")
+                       for m in RETRIEVAL_METRIC_LABELS],
         sort_key="hit_rate@k",
     )
 
@@ -764,7 +845,8 @@ def print_results_table(results: dict[str, dict[str, float]], k: int) -> None:
             title=f"RAGAS METRICS  (k={k},  {len(results)} pipelines)",
             results=results,
             metric_keys=RAGAS_OUTPUT_LABELS,
-            header_labels=[c.replace("ragas_", "") for c in RAGAS_OUTPUT_LABELS],
+            header_labels=[c.replace("ragas_", "")
+                           for c in RAGAS_OUTPUT_LABELS],
             sort_key="ragas_faithfulness",
         )
 
@@ -776,14 +858,16 @@ def save_results(results: dict[str, dict[str, float]], k: int) -> None:
         any(key.startswith("ragas_") for key in scores)
         for scores in results.values()
     )
-    all_labels = RETRIEVAL_METRIC_LABELS + (RAGAS_OUTPUT_LABELS if has_ragas else [])
+    all_labels = RETRIEVAL_METRIC_LABELS + \
+        (RAGAS_OUTPUT_LABELS if has_ragas else [])
 
     csv_path = RESULTS_DIR / "evaluation_results.csv"
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["pipeline", *all_labels, "k"])
         for name, scores in sorted(results.items()):
-            writer.writerow([name, *[f"{scores.get(m, 0):.6f}" for m in all_labels], k])
+            writer.writerow(
+                [name, *[f"{scores.get(m, 0):.6f}" for m in all_labels], k])
     print(f"\nCSV  → {csv_path}")
 
     json_path = RESULTS_DIR / "evaluation_results.json"
@@ -811,9 +895,11 @@ def run_ragas_only(
     Re-run retrieval (to get contexts) then score with RAGAS only.
     Merges RAGAS scores into the prior retrieval results.
     """
-    _, stores_by, bm25_by = build_indexes(pipelines, embeddings, llm, force_rebuild=False)
+    _, stores_by, bm25_by = build_indexes(
+        pipelines, embeddings, llm, force_rebuild=False)
 
-    print(f"\n[RAGAS-ONLY] Scoring {len(pipelines)} pipelines × {len(testset)} queries")
+    print(
+        f"\n[RAGAS-ONLY] Scoring {len(pipelines)} pipelines × {len(testset)} queries")
     print("-" * 60)
 
     results = {name: dict(scores) for name, scores in prior_results.items()}
@@ -835,7 +921,8 @@ def run_ragas_only(
             elif pipeline.retrieval == "hyde":
                 results_docs = retrieve_hyde(query, store, embeddings, llm, k)
             else:
-                raise ValueError(f"Unknown retrieval method: {pipeline.retrieval}")
+                raise ValueError(
+                    f"Unknown retrieval method: {pipeline.retrieval}")
 
             contexts = [r.page_content for r in results_docs]
             answer = generate_answer(query, contexts, llm)
@@ -847,7 +934,8 @@ def run_ragas_only(
             ))
 
             if (qi + 1) % 10 == 0:
-                print(f"    {qi + 1}/{len(testset)} queries", end="\r", flush=True)
+                print(f"    {qi + 1}/{len(testset)} queries",
+                      end="\r", flush=True)
 
         print(f"\n    Running RAGAS on {len(ragas_samples)} samples...")
         ragas_scores = run_ragas_evaluation(ragas_samples, llm, embeddings)
@@ -959,7 +1047,8 @@ def main() -> None:
         existing = json.loads(existing_json.read_text(encoding="utf-8"))
         k = existing.get("k", args.k)
         prior_results: dict[str, dict[str, float]] = existing["results"]
-        final_results = run_ragas_only(testset, pipelines, k, embeddings, llm, prior_results)
+        final_results = run_ragas_only(
+            testset, pipelines, k, embeddings, llm, prior_results)
     else:
         final_results = run_evaluation(
             testset, pipelines, args.k, embeddings, llm, args.force_rebuild,

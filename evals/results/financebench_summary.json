@@ -98,6 +98,17 @@
       "avg_judge_relevance": 0.04,
       "avg_judge_pass": 0.02,
       "avg_latency_seconds": 8.2734
+    },
+    {
+      "chunking": "orchestrator",
+      "method": "multi-agent",
+      "label": "orchestrator+multi-agent",
+      "rows": 50,
+      "avg_judge_correctness": 0.0,
+      "avg_judge_groundedness": 0.0,
+      "avg_judge_relevance": 0.0,
+      "avg_judge_pass": 0.0,
+      "avg_latency_seconds": 0.0
     }
   ]
 }

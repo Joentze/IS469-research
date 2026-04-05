@@ -1,6 +1,21 @@
+from datetime import datetime
+import os
+from pathlib import Path
+
 from langchain.tools import tool
 from langchain.agents import create_agent
+from langchain_chroma import Chroma
+from langchain_openai import OpenAIEmbeddings
 from langchain_tavily import TavilySearch
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+EVAL_DB_DIR = PROJECT_ROOT / "evals" / "database"
+RAG_COLLECTION_NAME = "eval_fixed_chunks"
+RAG_TOP_K = 5
+EMBEDDING_MODEL = "text-embedding-3-small"
+
+_rag_vector_store: Chroma | None = None
+_rag_embeddings: OpenAIEmbeddings | None = None
 
 tavily = TavilySearch(
     max_results=5,
@@ -12,19 +27,78 @@ tavily = TavilySearch(
 # =============================================================================
 
 
+def load_env() -> None:
+    env_path = PROJECT_ROOT / ".env"
+    if not env_path.exists():
+        return
+
+    for line in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+    if "OPENAI_API_KEY" not in os.environ and "API_KEY" in os.environ:
+        os.environ["OPENAI_API_KEY"] = os.environ["API_KEY"]
+
+
+def get_rag_vector_store() -> Chroma:
+    global _rag_embeddings, _rag_vector_store
+
+    load_env()
+    if not os.getenv("OPENAI_API_KEY"):
+        raise EnvironmentError("OPENAI_API_KEY not set. Check your .env file.")
+
+    if _rag_vector_store is None:
+        _rag_embeddings = OpenAIEmbeddings(model=EMBEDDING_MODEL)
+        _rag_vector_store = Chroma(
+            collection_name=RAG_COLLECTION_NAME,
+            embedding_function=_rag_embeddings,
+            persist_directory=str(EVAL_DB_DIR),
+        )
+        if _rag_vector_store._collection.count() <= 0:
+            raise FileNotFoundError(
+                f"Required Chroma collection '{RAG_COLLECTION_NAME}' is missing or empty."
+            )
+
+    return _rag_vector_store
+
+
 @tool("query_rag", description="Query the RAG knowledge base with a question and return relevant document chunks.")
 def query_rag(query: str) -> str:
     """Query the vector store / RAG pipeline and return retrieved context."""
-    # TODO: implement RAG retrieval (e.g. embed query, search vector DB, return chunks)
-    raise NotImplementedError
+    print(
+        f"[rag_agent] Querying Chroma collection '{RAG_COLLECTION_NAME}' for: {query}")
+    vector_store = get_rag_vector_store()
+    results = vector_store.similarity_search_with_score(query, k=RAG_TOP_K)
+    if not results:
+        print("[rag_agent] No relevant chunks found.")
+        return "No relevant chunks found."
+
+    lines = ["Top retrieved chunks:"]
+    for idx, (doc, score) in enumerate(results, start=1):
+        lines.append(f"[{idx}] score={score:.4f}")
+        lines.append(f"source={doc.metadata.get('source', 'unknown')}")
+        if "chunk_index" in doc.metadata:
+            lines.append(f"chunk_index={doc.metadata['chunk_index']}")
+        lines.append(doc.page_content[:1200])
+        lines.append("-")
+    print(
+        f"[rag_agent] Retrieved {len(results)} chunk(s) from the RAG database.")
+    return "\n".join(lines)
 
 
 @tool("search_web", description="Search the web for up-to-date information on a given query.")
 def search_web(query: str) -> str:
     """Run a web search and return a summary of the top results."""
-    # TODO: implement web search (e.g. via Tavily, SerpAPI, or Bing Search API)
+    print(f"[web_search_agent] Querying Tavily web search for: {query}")
     result = tavily.invoke({"query": query})
-    print(result)
+    print(
+        f"[web_search_agent] Retrieved {len(result.get('results', []))} web result(s).")
     return result["results"]
 
 
@@ -97,7 +171,6 @@ def call_web_search_agent(query: str) -> str:
 # =============================================================================
 # MAIN ORCHESTRATOR AGENT
 # =============================================================================
-from datetime import datetime
 
 now = datetime.now()
 # Human-readable date text, e.g. "Thursday, 02 April 2026"
@@ -143,5 +216,6 @@ def run(user_message: str) -> str:
 
 
 if __name__ == "__main__":
-    response = run("what is the latest news in iran")
+    response = run(
+        "Which region had the worst topline performance for MGM during FY2022?")
     print(response)
