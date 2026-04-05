@@ -30,3 +30,32 @@ langsmith = "^0.7.24"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+# UV Related configuration
+[project]
+name = "is469-research"
+version = "0.1.0"
+description = "research project for IS469 on various retrieval methods"
+authors = [{ name = "Joen Tan", email = "joentze01@gmail.com" }]
+requires-python = ">=3.12,<4"
+readme = "README.md"
+
+dependencies = [
+    "libsql-client>=0.3.1,<0.4",
+    "datasets>=4.7.0,<5",
+    "langchain>=1.2.12,<2",
+    "langgraph>=1.1.2,<2",
+    "openai>=2.28.0,<3",
+    "pandas>=3.0.1,<4",
+    "matplotlib>=3.10.8,<4",
+    "chromadb>=1.5.5,<2",
+    "langchain-chroma>=1.1.0,<2",
+    "langchain-openai>=1.0.3,<2",
+    "rank-bm25>=0.2.2,<0.3",
+    "langchain-community>=0.4.1,<0.5",
+    "sentence-transformers>=5.3.0,<6",
+    "langchain-text-splitters>=1.1.1,<2",
+]
+
+[tool.uv]
+package = false
