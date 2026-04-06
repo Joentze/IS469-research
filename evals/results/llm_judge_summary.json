@@ -1,0 +1,147 @@
+{
+  "summary": [
+    {
+      "chunking": "fixed",
+      "method": "agentic-rag",
+      "label": "fixed+agentic-rag",
+      "rows": 50,
+      "avg_judge_correctness": 0.22,
+      "avg_judge_groundedness": 0.38,
+      "avg_judge_relevance": 0.74,
+      "avg_judge_pass": 0.16,
+      "avg_latency_seconds": 16.2148
+    },
+    {
+      "chunking": "agentic",
+      "method": "agentic-rag",
+      "label": "agentic+agentic-rag",
+      "rows": 50,
+      "avg_judge_correctness": 0.24,
+      "avg_judge_groundedness": 0.32,
+      "avg_judge_relevance": 0.7,
+      "avg_judge_pass": 0.14,
+      "avg_latency_seconds": 36.8935
+    },
+    {
+      "chunking": "semantic",
+      "method": "agentic-rag",
+      "label": "semantic+agentic-rag",
+      "rows": 50,
+      "avg_judge_correctness": 0.2,
+      "avg_judge_groundedness": 0.4,
+      "avg_judge_relevance": 0.58,
+      "avg_judge_pass": 0.14,
+      "avg_latency_seconds": 28.6693
+    },
+    {
+      "chunking": "semantic",
+      "method": "hyde",
+      "label": "semantic+hyde",
+      "rows": 50,
+      "avg_judge_correctness": 0.16,
+      "avg_judge_groundedness": 0.5,
+      "avg_judge_relevance": 0.34,
+      "avg_judge_pass": 0.14,
+      "avg_latency_seconds": 9.2864
+    },
+    {
+      "chunking": "semantic",
+      "method": "traditional-rag",
+      "label": "semantic+traditional-rag",
+      "rows": 50,
+      "avg_judge_correctness": 0.16,
+      "avg_judge_groundedness": 0.46,
+      "avg_judge_relevance": 0.34,
+      "avg_judge_pass": 0.14,
+      "avg_latency_seconds": 7.7648
+    },
+    {
+      "chunking": "agentic",
+      "method": "hyde",
+      "label": "agentic+hyde",
+      "rows": 50,
+      "avg_judge_correctness": 0.12,
+      "avg_judge_groundedness": 0.38,
+      "avg_judge_relevance": 0.3,
+      "avg_judge_pass": 0.12,
+      "avg_latency_seconds": 9.4646
+    },
+    {
+      "chunking": "fixed",
+      "method": "traditional-rag",
+      "label": "fixed+traditional-rag",
+      "rows": 50,
+      "avg_judge_correctness": 0.1,
+      "avg_judge_groundedness": 0.22,
+      "avg_judge_relevance": 0.24,
+      "avg_judge_pass": 0.1,
+      "avg_latency_seconds": 7.657
+    },
+    {
+      "chunking": "agentic",
+      "method": "traditional-rag",
+      "label": "agentic+traditional-rag",
+      "rows": 50,
+      "avg_judge_correctness": 0.1,
+      "avg_judge_groundedness": 0.28,
+      "avg_judge_relevance": 0.24,
+      "avg_judge_pass": 0.08,
+      "avg_latency_seconds": 7.5311
+    },
+    {
+      "chunking": "fixed",
+      "method": "hyde",
+      "label": "fixed+hyde",
+      "rows": 50,
+      "avg_judge_correctness": 0.08,
+      "avg_judge_groundedness": 0.34,
+      "avg_judge_relevance": 0.22,
+      "avg_judge_pass": 0.08,
+      "avg_latency_seconds": 8.9189
+    },
+    {
+      "chunking": "fixed",
+      "method": "bm25",
+      "label": "fixed+bm25",
+      "rows": 50,
+      "avg_judge_correctness": 0.06,
+      "avg_judge_groundedness": 0.32,
+      "avg_judge_relevance": 0.14,
+      "avg_judge_pass": 0.04,
+      "avg_latency_seconds": 7.1366
+    },
+    {
+      "chunking": "agentic",
+      "method": "bm25",
+      "label": "agentic+bm25",
+      "rows": 50,
+      "avg_judge_correctness": 0.02,
+      "avg_judge_groundedness": 0.34,
+      "avg_judge_relevance": 0.16,
+      "avg_judge_pass": 0.02,
+      "avg_latency_seconds": 7.558
+    },
+    {
+      "chunking": "semantic",
+      "method": "bm25",
+      "label": "semantic+bm25",
+      "rows": 50,
+      "avg_judge_correctness": 0.02,
+      "avg_judge_groundedness": 0.5,
+      "avg_judge_relevance": 0.26,
+      "avg_judge_pass": 0.02,
+      "avg_latency_seconds": 20.2359
+    },
+    {
+      "chunking": "orchestrator",
+      "method": "orchestrator",
+      "label": "orchestrator+multi-agent",
+      "rows": 50,
+      "avg_judge_correctness": 0.24,
+      "avg_judge_groundedness": 0.0,
+      "avg_judge_relevance": 0.84,
+      "avg_judge_pass": 0.0,
+      "avg_latency_seconds": 19.9807
+    }
+  ]
+}

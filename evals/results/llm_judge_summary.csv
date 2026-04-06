@@ -1,0 +1,14 @@
+chunking,method,label,rows,avg_judge_correctness,avg_judge_groundedness,avg_judge_relevance,avg_judge_pass,avg_latency_seconds
+fixed,agentic-rag,fixed+agentic-rag,50,0.22,0.38,0.74,0.16,16.2148
+agentic,agentic-rag,agentic+agentic-rag,50,0.24,0.32,0.7,0.14,36.8935
+semantic,agentic-rag,semantic+agentic-rag,50,0.2,0.4,0.58,0.14,28.6693
+semantic,hyde,semantic+hyde,50,0.16,0.5,0.34,0.14,9.2864
+semantic,traditional-rag,semantic+traditional-rag,50,0.16,0.46,0.34,0.14,7.7648
+agentic,hyde,agentic+hyde,50,0.12,0.38,0.3,0.12,9.4646
+fixed,traditional-rag,fixed+traditional-rag,50,0.1,0.22,0.24,0.1,7.657
+agentic,traditional-rag,agentic+traditional-rag,50,0.1,0.28,0.24,0.08,7.5311
+fixed,hyde,fixed+hyde,50,0.08,0.34,0.22,0.08,8.9189
+fixed,bm25,fixed+bm25,50,0.06,0.32,0.14,0.04,7.1366
+agentic,bm25,agentic+bm25,50,0.02,0.34,0.16,0.02,7.558
+semantic,bm25,semantic+bm25,50,0.02,0.5,0.26,0.02,20.2359
+orchestrator,orchestrator,orchestrator+multi-agent,50,0.24,0.0,0.84,0.0,19.9807

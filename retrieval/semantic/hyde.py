@@ -37,8 +37,9 @@ LLM_MODEL = "gpt-4o-mini"
 VECTOR_STORE_DIR = "./database"
 COLLECTION_NAME = "hyde_semantic_chunks_collection"
 
-MAX_CHUNK_CHARS = 100
-SIMILARITY_THRESHOLD = 0.15
+MAX_SENTENCES_PER_CHUNK = 8
+OVERLAP_SENTENCES = 2
+BREAKPOINT_PERCENTILE = 70.0
 TOP_K = 5
 
 RELEVANT_DOC_IDS = {4, 6}
@@ -64,72 +65,107 @@ QUERY = "Which company reported the highest cloud revenue growth in 2026?"
 # ============================================================================
 
 
-def tokenize_words(text: str) -> set[str]:
-    """Tokenize into a lowercased word set for Jaccard similarity."""
-    return set(re.findall(r"\b[a-z0-9]+\b", text.lower()))
+def split_into_sentences(text: str) -> list[str]:
+    """Split text into simple sentence-like units."""
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    return [s.strip() for s in sentences if s and s.strip()]
 
 
-def jaccard_similarity(text_a: str, text_b: str) -> float:
-    tokens_a = tokenize_words(text_a)
-    tokens_b = tokenize_words(text_b)
-    if not tokens_a or not tokens_b:
+def cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
+    """Compute cosine similarity between two vectors."""
+    dot = sum(a * b for a, b in zip(vec_a, vec_b))
+    norm_a = sum(a * a for a in vec_a) ** 0.5
+    norm_b = sum(b * b for b in vec_b) ** 0.5
+    if norm_a == 0 or norm_b == 0:
         return 0.0
-    union_size = len(tokens_a | tokens_b)
-    return len(tokens_a & tokens_b) / union_size if union_size else 0.0
+    return dot / (norm_a * norm_b)
 
 
-def split_semantic_units(text: str) -> list[str]:
-    units = re.split(r"(?<=[.!?;])\s+|,\s+", text.strip())
-    return [u.strip() for u in units if u and u.strip()]
+def percentile(values: list[float], q: float) -> float:
+    """Compute percentile with linear interpolation."""
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+
+    rank = (len(ordered) - 1) * (q / 100.0)
+    lower = int(rank)
+    upper = min(lower + 1, len(ordered) - 1)
+    weight = rank - lower
+    return ordered[lower] * (1 - weight) + ordered[upper] * weight
 
 
-def semantic_chunk_text(
-    text: str,
-    max_chunk_chars: int = MAX_CHUNK_CHARS,
-    similarity_threshold: float = SIMILARITY_THRESHOLD,
-) -> list[str]:
-    """Group adjacent sentence units by lexical similarity."""
-    units = split_semantic_units(text)
-    if not units:
-        return []
-
-    chunks: list[str] = []
-    current = units[0]
-    prev = units[0]
-
-    for unit in units[1:]:
-        candidate = f"{current} {unit}".strip()
-        sim = jaccard_similarity(prev, unit)
-        should_merge = len(candidate) <= max_chunk_chars and (
-            sim >= similarity_threshold or len(current) < max_chunk_chars * 0.5
-        )
-        if should_merge:
-            current = candidate
-        else:
-            chunks.append(current)
-            current = unit
-        prev = unit
-
-    chunks.append(current)
-    return chunks
-
-
-def build_langchain_documents(docs: list[str]) -> list[Document]:
-    """Apply semantic chunking and return LangChain Documents with source_doc_id."""
+def semantic_chunk_documents(
+    docs: list[str],
+    sentence_embeddings: OpenAIEmbeddings,
+) -> list[Document]:
+    """Apply semantic sentence-window chunking and return LangChain Documents."""
     langchain_docs: list[Document] = []
     for doc_id, doc_text in enumerate(docs):
-        chunks = semantic_chunk_text(doc_text)
-        for chunk_idx, chunk in enumerate(chunks):
+        sentences = split_into_sentences(doc_text)
+        if not sentences:
+            continue
+        if len(sentences) == 1:
             langchain_docs.append(
                 Document(
-                    page_content=chunk,
+                    page_content=sentences[0],
                     metadata={
                         "source_doc_id": doc_id,
-                        "chunk_index": chunk_idx,
+                        "chunk_index": 0,
                         "chunk_method": "semantic",
                     },
                 )
             )
+            continue
+
+        embeddings_for_sentences = sentence_embeddings.embed_documents(sentences)
+        adjacent_similarities = [
+            cosine_similarity(embeddings_for_sentences[i], embeddings_for_sentences[i + 1])
+            for i in range(len(embeddings_for_sentences) - 1)
+        ]
+        breakpoint_threshold = percentile(adjacent_similarities, BREAKPOINT_PERCENTILE)
+        break_after_index = {
+            i for i, score in enumerate(adjacent_similarities) if score <= breakpoint_threshold
+        }
+
+        current: list[str] = []
+        chunk_index = 0
+
+        for i, sentence in enumerate(sentences):
+            current.append(sentence)
+
+            reached_max = len(current) >= MAX_SENTENCES_PER_CHUNK
+            semantic_break = i in break_after_index and len(current) >= 2
+
+            if reached_max or semantic_break:
+                langchain_docs.append(
+                    Document(
+                        page_content=" ".join(current).strip(),
+                        metadata={
+                            "source_doc_id": doc_id,
+                            "chunk_index": chunk_index,
+                            "chunk_method": "semantic",
+                        },
+                    )
+                )
+                chunk_index += 1
+
+                overlap = current[-OVERLAP_SENTENCES:] if OVERLAP_SENTENCES > 0 else []
+                current = overlap.copy()
+
+        if current:
+            langchain_docs.append(
+                Document(
+                    page_content=" ".join(current).strip(),
+                    metadata={
+                        "source_doc_id": doc_id,
+                        "chunk_index": chunk_index,
+                        "chunk_method": "semantic",
+                    },
+                )
+            )
+
     return langchain_docs
 
 
@@ -265,18 +301,18 @@ def run_hyde_pipeline(query: str = QUERY) -> dict[str, float]:
     print("=" * 60)
 
     print("\n[1] Building semantic chunks...")
-    langchain_docs = build_langchain_documents(DOCS)
+    sentence_embeddings = OpenAIEmbeddings(model=EMBEDDING_MODEL)
+    langchain_docs = semantic_chunk_documents(DOCS, sentence_embeddings)
     print(f"Created {len(langchain_docs)} chunks from {len(DOCS)} documents")
     logger.info("Chunk generation complete: %d chunks", len(langchain_docs))
 
     print("\n[2] Initializing ChromaDB...")
-    embeddings = OpenAIEmbeddings(model=EMBEDDING_MODEL)
-    vector_store = initialize_vector_store(langchain_docs, embeddings)
+    vector_store = initialize_vector_store(langchain_docs, sentence_embeddings)
     print(f"Indexed {vector_store._collection.count()} chunks")
 
     print(f"\n[3] Query: {query}")
     llm = ChatOpenAI(model=LLM_MODEL, temperature=0)
-    results = hyde_retrieve(query, vector_store, embeddings, llm, k=TOP_K)
+    results = hyde_retrieve(query, vector_store, sentence_embeddings, llm, k=TOP_K)
     print(f"Retrieved {len(results)} chunks")
 
     ranked_doc_ids = dedupe_preserve_order(

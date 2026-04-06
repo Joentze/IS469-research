@@ -46,8 +46,9 @@ def load_project_env(project_root: Path) -> None:
         if key and key not in os.environ:
             os.environ[key] = value
 
+TOP_K = 5 
 CHUNK_SIZE = 1000  # Fixed chunk size in characters
-CHUNK_OVERLAP = 100  # Overlap between chunks for context preservation
+CHUNK_OVERLAP = 200  # Overlap between chunks for context preservation
 EMBEDDING_MODEL = "text-embedding-3-small"
 LLM_MODEL = "gpt-4o-mini"
 VECTOR_STORE_DIR = "./database"
@@ -193,7 +194,7 @@ def create_agent_tools(vector_store: Chroma) -> list:
     """
 
     @tool
-    def search_knowledge_base(query: str, k: int = 5) -> str:
+    def search_knowledge_base(query: str, k: int = TOP_K) -> str:
         """
         Search the vector store for documents relevant to the query.
         Returns the top-k most similar documents.

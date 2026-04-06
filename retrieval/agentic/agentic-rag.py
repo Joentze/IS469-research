@@ -50,18 +50,22 @@ def load_project_env(project_root: Path) -> None:
 
 EMBEDDING_MODEL = "text-embedding-3-small"
 LLM_MODEL = "gpt-4o-mini"
-VECTOR_STORE_DIR = "./database"
-COLLECTION_NAME = "agentic_chunks_collection"
-BATCH_SIZE = 5000
 PROJECT_ROOT = Path(__file__).parents[2]
 load_project_env(PROJECT_ROOT)
 DEFAULT_TEXTS_DIR = PROJECT_ROOT / "texts"
 TEXTS_DIR = os.getenv("TEXTS_DIR", str(DEFAULT_TEXTS_DIR))
+DEFAULT_VECTOR_STORE_DIR = PROJECT_ROOT / "database_agentic"
+VECTOR_STORE_DIR = os.getenv("VECTOR_STORE_DIR", str(DEFAULT_VECTOR_STORE_DIR))
+COLLECTION_NAME = "agentic_bm25_chunks_collection"
+BATCH_SIZE = 5000
 FORCE_REINDEX = os.getenv("FORCE_REINDEX", "false").lower() == "true"
 
 MAX_SENTENCES_PER_CHUNK = 6
 MIN_SENTENCES_PER_CHUNK = 2
 OVERLAP_SENTENCES = 1
+CHUNK_PLANNING_WINDOW_SENTENCES = 80
+CHUNK_PLANNING_WINDOW_OVERLAP = 10
+CHUNK_PLANNING_MAX_SENTENCE_CHARS = 500
 
 
 # ============================================================================
@@ -129,20 +133,22 @@ def _fallback_breakpoints(sentence_count: int) -> list[int]:
 	return breaks
 
 
-def choose_chunk_breakpoints_with_agent(sentences: list[str], llm: ChatOpenAI) -> list[int]:
-	"""
-	Ask an LLM to propose chunk boundaries.
+def _truncate_for_prompt(text: str, max_chars: int = CHUNK_PLANNING_MAX_SENTENCE_CHARS) -> str:
+	"""Trim long sentence strings in prompts to control token usage."""
+	if len(text) <= max_chars:
+		return text
+	return text[: max_chars - 3].rstrip() + "..."
 
-	The model returns JSON with `break_after` indexes. Each index means:
-	create a chunk boundary after that sentence index.
-	"""
-	if len(sentences) <= MAX_SENTENCES_PER_CHUNK:
+
+def _choose_breakpoints_for_window(window_sentences: list[str], llm: ChatOpenAI) -> list[int]:
+	"""Run one chunk-planning LLM call on a sentence window."""
+	if len(window_sentences) <= MAX_SENTENCES_PER_CHUNK:
 		return []
 
 	numbered_sentences = "\n".join(
-		[f"{i}: {sentence}" for i, sentence in enumerate(sentences)]
+		f"{i}: {_truncate_for_prompt(sentence)}"
+		for i, sentence in enumerate(window_sentences)
 	)
-
 	prompt = (
 		"You are a chunking planner for a RAG system.\n"
 		"Group adjacent sentences into coherent chunks by topic/idea shifts.\n"
@@ -156,18 +162,50 @@ def choose_chunk_breakpoints_with_agent(sentences: list[str], llm: ChatOpenAI) -
 		f"{numbered_sentences}"
 	)
 
+	response = llm.invoke(prompt)
+
 	try:
-		response = llm.invoke(prompt)
 		text = str(getattr(response, "content", "")).strip()
 		parsed = json.loads(text)
 		raw_breaks = parsed.get("break_after", [])
 		if not isinstance(raw_breaks, list):
-			return _fallback_breakpoints(len(sentences))
+			return []
 		int_breaks = [int(x) for x in raw_breaks]
-		breaks = _normalize_breakpoints(int_breaks, len(sentences))
-		return breaks if breaks is not None else _fallback_breakpoints(len(sentences))
-	except Exception:
-		return _fallback_breakpoints(len(sentences))
+		return _normalize_breakpoints(int_breaks, len(window_sentences))
+	except (json.JSONDecodeError, TypeError, ValueError):
+		return []
+
+
+def choose_chunk_breakpoints_with_agent(sentences: list[str], llm: ChatOpenAI) -> list[int]:
+	"""
+	Ask an LLM to propose chunk boundaries.
+
+	The model returns JSON with `break_after` indexes. Each index means:
+	create a chunk boundary after that sentence index.
+	"""
+	if len(sentences) <= MAX_SENTENCES_PER_CHUNK:
+		return []
+
+	window_size = max(MAX_SENTENCES_PER_CHUNK + 1, CHUNK_PLANNING_WINDOW_SENTENCES)
+	window_overlap = max(0, min(CHUNK_PLANNING_WINDOW_OVERLAP, window_size - 1))
+	step = max(1, window_size - window_overlap)
+
+	global_breaks: list[int] = []
+	for start in range(0, len(sentences), step):
+		end = min(start + window_size, len(sentences))
+		window_sentences = sentences[start:end]
+
+		local_breaks = _choose_breakpoints_for_window(window_sentences, llm)
+		for local_break in local_breaks:
+			global_break = start + local_break
+			if global_break < len(sentences) - 1:
+				global_breaks.append(global_break)
+
+		if end >= len(sentences):
+			break
+
+	normalized_breaks = _normalize_breakpoints(global_breaks, len(sentences))
+	return normalized_breaks if normalized_breaks else _fallback_breakpoints(len(sentences))
 
 
 def enforce_chunk_size_rules(breaks: list[int], sentence_count: int) -> list[int]:
@@ -371,24 +409,32 @@ def run_agentic_rag_pipeline(query: str) -> str:
 	print("AGENTIC RAG PIPELINE - AGENTIC CHUNKING")
 	print("=" * 60)
 
-	print("\n[1] Loading source documents...")
-	docs = load_sample_documents()
-	print(f"Loaded {len(docs)} documents")
-
-	print("\n[2] Building agentic chunks...")
-	chunking_llm = ChatOpenAI(model=LLM_MODEL, temperature=0)
-	agentic_chunks = agentic_chunk_documents(docs, chunking_llm)
-	print(f"Created {len(agentic_chunks)} agentic chunks")
-
-	print("\n[3] Initializing ChromaDB...")
+	print("\n[1] Initializing ChromaDB...")
 	embeddings = OpenAIEmbeddings(model=EMBEDDING_MODEL)
-	vector_store = initialize_vector_store(agentic_chunks, embeddings)
-	print(f"Indexed {vector_store._collection.count()} chunks")
+	vector_store = initialize_vector_store([], embeddings)
+	existing_count = vector_store._collection.count()
+	print(f"Found {existing_count} chunks in vector store")
 
-	print("\n[4] Creating ReAct answering agent...")
+	if existing_count == 0 or FORCE_REINDEX:
+		print("\n[2] Loading source documents...")
+		docs = load_sample_documents()
+		print(f"Loaded {len(docs)} documents")
+
+		print("\n[3] Building agentic chunks...")
+		chunking_llm = ChatOpenAI(model=LLM_MODEL, temperature=0)
+		agentic_chunks = agentic_chunk_documents(docs, chunking_llm)
+		print(f"Created {len(agentic_chunks)} agentic chunks")
+
+		print("\n[4] Indexing agentic chunks...")
+		vector_store = initialize_vector_store(agentic_chunks, embeddings)
+		print(f"Indexed {vector_store._collection.count()} chunks")
+	else:
+		print("Skipping document loading and re-indexing because an existing vector store is available.")
+
+	print("\n[5] Creating ReAct answering agent...")
 	agent = create_rag_agent(vector_store)
 
-	print(f"\n[5] Query: {query}")
+	print(f"\n[6] Query: {query}")
 	result = agent.invoke({"messages": [HumanMessage(content=query)]})
 	answer = extract_final_text(result)
 
