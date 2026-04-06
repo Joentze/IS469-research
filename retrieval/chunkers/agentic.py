@@ -2,10 +2,12 @@
 
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, List
 
 from langchain_core.documents import Document
 from langchain_openai import ChatOpenAI
+from tqdm import tqdm
 
 from core.interfaces import Chunker
 from utils.cache import get_global_cache
@@ -214,19 +216,8 @@ class AgenticChunker(Chunker):
         chunk_planning_window_sentences: int = 80,
         chunk_planning_window_overlap: int = 10,
         enable_cache: bool = True,
+        max_workers: int = 8,
     ):
-        """
-        Initialize the agentic chunker.
-
-        Args:
-            llm_model: LLM model to use for chunk planning
-            min_sentences_per_chunk: Minimum sentences per chunk
-            max_sentences_per_chunk: Maximum sentences per chunk
-            overlap_sentences: Sentences to overlap between chunks
-            chunk_planning_window_sentences: Sentence window size for LLM calls
-            chunk_planning_window_overlap: Overlap of planning windows
-            enable_cache: Whether to cache chunking results
-        """
         self.llm = ChatOpenAI(model=llm_model, temperature=0)
         self.min_sentences_per_chunk = min_sentences_per_chunk
         self.max_sentences_per_chunk = max_sentences_per_chunk
@@ -234,6 +225,32 @@ class AgenticChunker(Chunker):
         self.chunk_planning_window_sentences = chunk_planning_window_sentences
         self.chunk_planning_window_overlap = chunk_planning_window_overlap
         self.enable_cache = enable_cache
+        self.max_workers = max_workers
+
+    def _chunk_single(self, doc: Document) -> List[Document]:
+        """Chunk a single document. Called in parallel across documents."""
+        sentences = split_into_sentences(doc.page_content)
+        if not sentences:
+            return []
+        if len(sentences) <= self.max_sentences_per_chunk:
+            return [
+                Document(
+                    page_content=" ".join(sentences),
+                    metadata={**doc.metadata, "chunk_index": 0, "chunk_method": "agentic"},
+                )
+            ]
+        raw_breaks = choose_chunk_breakpoints_with_agent(
+            sentences,
+            self.llm,
+            self.min_sentences_per_chunk,
+            self.max_sentences_per_chunk,
+            self.chunk_planning_window_sentences,
+            self.chunk_planning_window_overlap,
+        )
+        breaks = enforce_chunk_size_rules(
+            raw_breaks, len(sentences), self.min_sentences_per_chunk, self.max_sentences_per_chunk
+        )
+        return build_chunks_from_breakpoints(sentences, breaks, doc.metadata, self.overlap_sentences)
 
     def chunk(self, documents: List[Document]) -> List[Document]:
         """
@@ -245,48 +262,26 @@ class AgenticChunker(Chunker):
         Returns:
             List of chunked documents with agentic boundaries
         """
-        # Check cache first
         if self.enable_cache:
             cache = get_global_cache()
             cached_chunks = cache.get(self._get_chunker_name(), documents)
             if cached_chunks is not None:
                 return cached_chunks
 
-        chunked_docs: List[Document] = []
+        results: dict[int, List[Document]] = {}
 
-        for doc in documents:
-            sentences = split_into_sentences(doc.page_content)
-            if not sentences:
-                continue
-            if len(sentences) <= self.max_sentences_per_chunk:
-                chunked_docs.append(
-                    Document(
-                        page_content=" ".join(sentences),
-                        metadata={
-                            **doc.metadata,
-                            "chunk_index": 0,
-                            "chunk_method": "agentic",
-                        },
-                    )
-                )
-                continue
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = {executor.submit(self._chunk_single, doc): i for i, doc in enumerate(documents)}
+            with tqdm(total=len(documents), desc="Agentic chunking", unit="doc") as pbar:
+                for future in as_completed(futures):
+                    i = futures[future]
+                    results[i] = future.result()
+                    source = documents[i].metadata.get("source", "")
+                    pbar.set_postfix(doc=source, refresh=False)
+                    pbar.update(1)
 
-            raw_breaks = choose_chunk_breakpoints_with_agent(
-                sentences,
-                self.llm,
-                self.min_sentences_per_chunk,
-                self.max_sentences_per_chunk,
-                self.chunk_planning_window_sentences,
-                self.chunk_planning_window_overlap,
-            )
-            breaks = enforce_chunk_size_rules(
-                raw_breaks, len(sentences), self.min_sentences_per_chunk, self.max_sentences_per_chunk
-            )
-            chunked_docs.extend(
-                build_chunks_from_breakpoints(sentences, breaks, doc.metadata, self.overlap_sentences)
-            )
+        chunked_docs = [chunk for i in range(len(documents)) for chunk in results.get(i, [])]
 
-        # Store in cache
         if self.enable_cache:
             cache = get_global_cache()
             cache.put(self._get_chunker_name(), chunked_docs, documents)

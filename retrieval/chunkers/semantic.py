@@ -1,9 +1,11 @@
 """Semantic chunking strategy based on embedding similarity."""
 
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Set
 
 from langchain_core.documents import Document
+from tqdm import tqdm
 
 from core.interfaces import Chunker, Embeddings
 from utils.cache import get_global_cache
@@ -50,6 +52,7 @@ class SemanticChunker(Chunker):
         overlap_sentences: int = 2,
         breakpoint_percentile: float = 70.0,
         enable_cache: bool = True,
+        max_workers: int = 8,
     ):
         """
         Initialize the semantic chunker.
@@ -66,6 +69,59 @@ class SemanticChunker(Chunker):
         self.overlap_sentences = overlap_sentences
         self.breakpoint_percentile = breakpoint_percentile
         self.enable_cache = enable_cache
+        self.max_workers = max_workers
+
+    def _chunk_single(self, doc: Document) -> List[Document]:
+        """Chunk a single document. Called in parallel across documents."""
+        sentences = split_into_sentences(doc.page_content)
+        if not sentences:
+            return []
+        if len(sentences) == 1:
+            return [doc]
+
+        sentence_vectors = self.embedder.embed_documents(sentences)
+        adjacent_similarities = [
+            cosine_similarity(sentence_vectors[i], sentence_vectors[i + 1])
+            for i in range(len(sentence_vectors) - 1)
+        ]
+        breakpoint_threshold = percentile(adjacent_similarities, self.breakpoint_percentile)
+
+        break_after_index: Set[int] = {
+            i
+            for i, score in enumerate(adjacent_similarities)
+            if score <= breakpoint_threshold
+        }
+
+        chunks: List[Document] = []
+        current: List[str] = []
+        chunk_index = 0
+
+        for i, sentence in enumerate(sentences):
+            current.append(sentence)
+
+            reached_max = len(current) >= self.max_sentences_per_chunk
+            semantic_break = i in break_after_index and len(current) >= 2
+
+            if reached_max or semantic_break:
+                chunks.append(
+                    Document(
+                        page_content=" ".join(current).strip(),
+                        metadata={**doc.metadata, "chunk_index": chunk_index, "chunk_method": "semantic"},
+                    )
+                )
+                chunk_index += 1
+                overlap = current[-self.overlap_sentences:] if self.overlap_sentences > 0 else []
+                current = overlap.copy()
+
+        if current:
+            chunks.append(
+                Document(
+                    page_content=" ".join(current).strip(),
+                    metadata={**doc.metadata, "chunk_index": chunk_index, "chunk_method": "semantic"},
+                )
+            )
+
+        return chunks
 
     def chunk(self, documents: List[Document]) -> List[Document]:
         """
@@ -80,76 +136,26 @@ class SemanticChunker(Chunker):
         Returns:
             List of chunked documents with updated metadata
         """
-        # Check cache first
         if self.enable_cache:
             cache = get_global_cache()
             cached_chunks = cache.get(self._get_chunker_name(), documents)
             if cached_chunks is not None:
                 return cached_chunks
 
-        chunked_docs: List[Document] = []
+        results: dict[int, List[Document]] = {}
 
-        for doc in documents:
-            sentences = split_into_sentences(doc.page_content)
-            if not sentences:
-                continue
-            if len(sentences) == 1:
-                chunked_docs.append(doc)
-                continue
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = {executor.submit(self._chunk_single, doc): i for i, doc in enumerate(documents)}
+            with tqdm(total=len(documents), desc="Semantic chunking", unit="doc") as pbar:
+                for future in as_completed(futures):
+                    i = futures[future]
+                    results[i] = future.result()
+                    source = documents[i].metadata.get("source", "")
+                    pbar.set_postfix(doc=source, refresh=False)
+                    pbar.update(1)
 
-            # Embed sentences
-            sentence_vectors = self.embedder.embed_documents(sentences)
-            adjacent_similarities = [
-                cosine_similarity(sentence_vectors[i], sentence_vectors[i + 1])
-                for i in range(len(sentence_vectors) - 1)
-            ]
-            breakpoint_threshold = percentile(adjacent_similarities, self.breakpoint_percentile)
+        chunked_docs = [chunk for i in range(len(documents)) for chunk in results.get(i, [])]
 
-            # Find breaks where similarity drops below threshold
-            break_after_index: Set[int] = {
-                i
-                for i, score in enumerate(adjacent_similarities)
-                if score <= breakpoint_threshold
-            }
-
-            current: List[str] = []
-            chunk_index = 0
-
-            for i, sentence in enumerate(sentences):
-                current.append(sentence)
-
-                reached_max = len(current) >= self.max_sentences_per_chunk
-                semantic_break = i in break_after_index and len(current) >= 2
-
-                if reached_max or semantic_break:
-                    chunked_docs.append(
-                        Document(
-                            page_content=" ".join(current).strip(),
-                            metadata={
-                                **doc.metadata,
-                                "chunk_index": chunk_index,
-                                "chunk_method": "semantic",
-                            },
-                        )
-                    )
-                    chunk_index += 1
-
-                    overlap = current[-self.overlap_sentences :] if self.overlap_sentences > 0 else []
-                    current = overlap.copy()
-
-            if current:
-                chunked_docs.append(
-                    Document(
-                        page_content=" ".join(current).strip(),
-                        metadata={
-                            **doc.metadata,
-                            "chunk_index": chunk_index,
-                            "chunk_method": "semantic",
-                        },
-                    )
-                )
-
-        # Store in cache
         if self.enable_cache:
             cache = get_global_cache()
             cache.put(self._get_chunker_name(), chunked_docs, documents)
