@@ -78,6 +78,7 @@ RESULTS_DIR = EVAL_DIR / "results"
 DEFAULT_TESTSET = EVAL_DIR / "testset.json"
 
 EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_DIM=512
 LLM_MODEL = "gpt-4o-mini"
 DEFAULT_K = 5
 

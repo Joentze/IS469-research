@@ -228,7 +228,7 @@ def evaluate_pipeline(
     testset: list[dict],
     k: int,
 ) -> dict[str, float]:
-    embedder = OpenAIEmbedder(model=EMBEDDING_MODEL, dimensions=EMBEDDING_DIM)
+    embedder = OpenAIEmbedder(model=EMBEDDING_MODEL)
     generator = TraditionalGenerator(llm_model=LLM_MODEL)
 
     console.print(f"\n[bold cyan]{pipeline.name}[/bold cyan]")
@@ -332,8 +332,9 @@ def main() -> None:
     parser.add_argument("--testset", default=str(DEFAULT_TESTSET))
     parser.add_argument("--k", type=int, default=DEFAULT_K)
     parser.add_argument(
-        "--pipeline", nargs="+", metavar="PIPELINE", required=True,
+        "--pipeline", nargs="+", metavar="PIPELINE",
         help=f"Pipeline(s) to evaluate. Available: {[p.name for p in ALL_PIPELINES]}",
+        default=[p.name for p in ALL_PIPELINES],
     )
     args = parser.parse_args()
 
